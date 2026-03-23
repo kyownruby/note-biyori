@@ -134,23 +134,26 @@ async function fetchComments() {
   try {
     let allNotes = [];
     let page = 1;
-    while (page <= 5) {
+    while (true) {
       const res = await fetch(CORS + encodeURIComponent(`${NOTE_API}/v2/creators/${urlname}/contents?kind=note&page=${page}`));
       if (!res.ok) throw new Error('ユーザーが見つからないか、APIエラーが発生しました');
       const data = await res.json();
       const contents = data?.data?.contents || [];
       if (contents.length === 0) break;
       allNotes = allNotes.concat(contents);
+      status.textContent = `記事一覧を取得中... ${allNotes.length}件`;
       if (data?.data?.isLastPage) break;
       page++;
     }
     if (allNotes.length === 0) throw new Error('記事が見つかりませんでした。アカウント名を確認してね');
 
-    status.textContent = `${allNotes.length}件の記事からコメントを取得中...`;
     let allComments = [];
-    const targets = allNotes.filter(n => (n.commentCount || n.comment_count || 0) > 0).slice(0, 20);
+    const targets = allNotes.filter(n => (n.commentCount || n.comment_count || 0) > 0);
+    status.textContent = `${allNotes.length}件の記事のうち、コメント付き${targets.length}件からコメントを取得中...`;
 
-    for (const note of targets) {
+    for (let i = 0; i < targets.length; i++) {
+      const note = targets[i];
+      if (i > 0 && i % 5 === 0) status.textContent = `コメント取得中... (${i}/${targets.length})`;
       try {
         const res = await fetch(CORS + encodeURIComponent(`${NOTE_API}/v1/note/${note.id}/comments`));
         if (!res.ok) continue;
