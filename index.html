@@ -51,6 +51,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .feed-info .title a { color: #333; text-decoration: none; }
 .feed-info .title a:hover { color: #41C9B4; }
 .feed-info .date { font-size: 12px; color: #aaa; }
+.feed-group { margin-bottom: 1.5rem; }
+.feed-group-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 2px solid #41C9B4; }
+.feed-group-header .group-name { font-size: 15px; font-weight: 600; color: #333; }
+.feed-group-header .group-count { font-size: 12px; color: #888; background: #f0f0f0; border-radius: 99px; padding: 2px 8px; }
 .creator-row { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
 .creator-row input { flex: 1; padding: 6px 10px; border: 1px solid #ddd; border-radius: 8px; font-size: 13px; }
 .creator-row input:focus { outline: none; border-color: #41C9B4; }
@@ -266,24 +270,46 @@ async function fetchFeeds() {
     } catch(e) {}
   }
 
-  allItems.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
-
   if (allItems.length === 0) {
     list.innerHTML = '<div class="empty">記事が取得できませんでした</div>';
   } else {
+    const grouped = {};
+    creators.forEach(c => { grouped[c] = []; });
     allItems.forEach(item => {
-      const date = new Date(item.pubDate).toLocaleDateString('ja-JP');
-      const thumb = item.thumbnail || '';
-      list.innerHTML += `
-        <div class="feed-card">
-          ${thumb ? `<img class="feed-thumb" src="${thumb}" onerror="this.style.display='none'" />` : '<div class="feed-thumb"></div>'}
-          <div class="feed-info">
-            <div class="creator">@${item.creatorName}</div>
-            <div class="title"><a href="${item.link}" target="_blank">${item.title}</a></div>
-            <div class="date">${date}</div>
-          </div>
-        </div>`;
+      if (!grouped[item.creatorName]) grouped[item.creatorName] = [];
+      grouped[item.creatorName].push(item);
     });
+    Object.keys(grouped).forEach(creator => {
+      grouped[creator].sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+    });
+
+    let html = '';
+    creators.forEach(creator => {
+      const items = grouped[creator] || [];
+      html += `<div class="feed-group">
+        <div class="feed-group-header">
+          <span class="group-name">@${creator}</span>
+          <span class="group-count">${items.length}件</span>
+        </div>`;
+      if (items.length === 0) {
+        html += '<div class="empty">記事を取得できませんでした</div>';
+      } else {
+        items.forEach(item => {
+          const date = new Date(item.pubDate).toLocaleDateString('ja-JP');
+          const thumb = item.thumbnail || '';
+          html += `
+            <div class="feed-card">
+              ${thumb ? `<img class="feed-thumb" src="${thumb}" onerror="this.style.display='none'" />` : '<div class="feed-thumb"></div>'}
+              <div class="feed-info">
+                <div class="title"><a href="${item.link}" target="_blank">${item.title}</a></div>
+                <div class="date">${date}</div>
+              </div>
+            </div>`;
+        });
+      }
+      html += '</div>';
+    });
+    list.innerHTML = html;
   }
 
   status.className = 'status';
