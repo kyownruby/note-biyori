@@ -347,18 +347,14 @@ async function fetchArticles() {
           const shortTitle = truncateTitle(a.title, 32);
           const commentKey = c.key || '';
           const commentUrl = a.link ? a.link + '?from=notice&scrollpos=comment&c=' + commentKey : '#';
-          list.innerHTML += `
-            <div class="comment-card ${isChecked ? 'read' : ''}" data-article-id="${id}" onclick="window.open('${commentUrl}','_blank')">
-              <div class="notif-icon">
-                <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
-              </div>
-              ${avatar ? `<img class="notif-avatar" src="${avatar}" onerror="this.style.display='none'" />` : '<div class="notif-avatar"></div>'}
-              <div class="notif-content">
-                <div class="notif-text"><span class="notif-name">${userName}</span>さんがあなたの記事にコメントしました</div>
-                <div class="notif-article-title">${shortTitle}</div>
-                <div class="notif-time">${cDate}</div>
-              </div>
-            </div>`;
+          list.innerHTML += '<div class="comment-card ' + (isChecked ? 'read' : '') + '" data-article-id="' + id + '" onclick="window.open(\'' + commentUrl.replace(/'/g, "\\'") + '\',\'_blank\')">'
+            + '<div class="notif-icon"><svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg></div>'
+            + (avatar ? '<img class="notif-avatar" src="' + avatar + '" onerror="this.style.display=\'none\'" />' : '<div class="notif-avatar"></div>')
+            + '<div class="notif-content">'
+            + '<div class="notif-text"><span class="notif-name">' + userName + '</span>さんがあなたの記事にコメントしました</div>'
+            + '<div class="notif-article-title">' + shortTitle + '</div>'
+            + '<div class="notif-time">' + cDate + '</div>'
+            + '</div></div>';
         });
       }
     }
