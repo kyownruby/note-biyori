@@ -340,7 +340,6 @@ async function fetchArticles() {
           const userName = c.user?.nickname || c.user?.urlname || '匿名';
           list.innerHTML += `
             <div class="comment-card ${isChecked ? 'read' : ''}" data-article-id="${id}">
-              <div class="article-title"><a href="${a.link}" target="_blank">${a.title}</a> <span style="font-size:11px;color:#bbb">${date}</span></div>
               <div class="commenter">
                 ${avatar ? `<img class="commenter-avatar" src="${avatar}" onerror="this.style.display='none'" />` : '<div class="commenter-avatar"></div>'}
                 <span class="commenter-name">${userName}</span>
