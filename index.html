@@ -337,8 +337,6 @@ async function fetchArticles() {
       const id = feedId(a);
       const date = a.pubDate ? new Date(a.pubDate).toLocaleDateString('ja-JP') : '';
       const isChecked = checkedArticles.includes(id);
-      const commentUrl = a.link ? a.link + '#comments' : '#';
-
       if (comments.length > 0) {
         articlesWithComments++;
         totalComments += comments.length;
@@ -347,8 +345,10 @@ async function fetchArticles() {
           const avatar = c.user?.profile_image_url || '';
           const userName = c.user?.nickname || c.user?.urlname || '匿名';
           const shortTitle = truncateTitle(a.title, 32);
+          const commentKey = c.key || '';
+          const commentUrl = a.link ? a.link + '?from=notice&scrollpos=comment&c=' + commentKey : '#';
           list.innerHTML += `
-            <div class="comment-card ${isChecked ? 'read' : ''}" data-article-id="${id}" onclick="window.open('${commentUrl}','_blank')">
+            <div class="comment-card ${isChecked ? 'read' : ''}" data-article-id="${id}" onclick="window.open('${commentUrl}','_blank')">`;
               <div class="notif-icon">
                 <svg viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
               </div>
