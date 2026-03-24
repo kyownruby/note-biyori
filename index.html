@@ -144,9 +144,11 @@ const CORS_PROXIES = [
   url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
 ];
 async function fetchWithCors(url) {
+  const cacheBuster = (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
+  const noCacheUrl = url + cacheBuster;
   for (const proxy of CORS_PROXIES) {
     try {
-      const res = await fetch(proxy(url));
+      const res = await fetch(proxy(noCacheUrl), { cache: 'no-store' });
       if (res.ok) return res;
       console.warn(`[note-mgr] Proxy returned ${res.status} for ${url}`);
     } catch(e) {
@@ -154,7 +156,7 @@ async function fetchWithCors(url) {
     }
   }
   // Direct fetch as last resort
-  try { return await fetch(url); } catch(e) { return null; }
+  try { return await fetch(noCacheUrl, { cache: 'no-store' }); } catch(e) { return null; }
 }
 function parseRSS(xml) {
   const parser = new DOMParser();
