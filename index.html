@@ -396,13 +396,24 @@ async function fetchArticles() {
     } else {
       const articleCount = Math.max(1, Math.min(50, parseInt(document.getElementById('article-count').value) || 1));
       status.textContent = `公開記事を取得中...`;
-      const apiUrl = `https://note.com/api/v2/creators/${urlname}/contents?kind=note&page=1&per=${articleCount}`;
-      const res = await fetchWithCors(apiUrl);
-      if (!res || !res.ok) throw new Error('記事の取得に失敗しました。アカウント名を確認してください');
-      const data = await res.json();
-      const notes = data.data?.contents || [];
-      if (notes.length === 0) throw new Error('記事が見つかりませんでした');
-      articles = notes.map(n => ({
+      const allNotes = [];
+      let page = 1;
+      const perPage = 20;
+      while (allNotes.length < articleCount) {
+        const remaining = articleCount - allNotes.length;
+        const per = Math.min(perPage, remaining);
+        const apiUrl = `https://note.com/api/v2/creators/${urlname}/contents?kind=note&page=${page}&per=${per}`;
+        const res = await fetchWithCors(apiUrl);
+        if (!res || !res.ok) throw new Error('記事の取得に失敗しました。アカウント名を確認してください');
+        const data = await res.json();
+        const notes = data.data?.contents || [];
+        if (notes.length === 0) break;
+        allNotes.push(...notes);
+        if (data.data?.is_last_page) break;
+        page++;
+      }
+      if (allNotes.length === 0) throw new Error('記事が見つかりませんでした');
+      articles = allNotes.slice(0, articleCount).map(n => ({
         title: n.name || n.title || '',
         link: `https://note.com/${urlname}/n/${n.key}`,
         pubDate: n.published_at || n.created_at || '',
