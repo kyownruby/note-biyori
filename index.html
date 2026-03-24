@@ -271,14 +271,21 @@ async function fetchCommentsForNote(noteKey) {
 }
 
 function filterUnrepliedComments(comments, ownerUrlname) {
-  return comments.filter(c => {
-    // 自分自身のコメントは除外
-    if (c.user?.urlname === ownerUrlname) return false;
-    // 返信数が0件のコメントのみ残す
+  console.log(`[note-mgr] Filter: ownerUrlname="${ownerUrlname}", total=${comments.length}`);
+  if (comments.length > 0) {
+    console.log('[note-mgr] Sample comment object:', JSON.stringify(comments[0], null, 2));
+  }
+  const result = comments.filter(c => {
+    const userUrlname = c.user?.urlname;
+    const isOwner = userUrlname === ownerUrlname;
     const replyCount = c.reply_count ?? c.sub_comment_count ?? c.children_count
       ?? (c.sub_comments || c.children || []).length ?? 0;
+    console.log(`[note-mgr] Comment by "${userUrlname}", isOwner=${isOwner}, replyCount=${replyCount}`);
+    if (isOwner) return false;
     return replyCount === 0;
   });
+  console.log(`[note-mgr] After filter: ${result.length} unreplied`);
+  return result;
 }
 
 async function fetchArticles() {
