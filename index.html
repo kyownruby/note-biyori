@@ -243,26 +243,26 @@ async function fetchComments() {
     const CUTOFF = new Date('2025-09-08T10:00:00+09:00').getTime();
     let allNotes = [];
     let page = 1;
-    let reachedOlder = false;
-    while (!reachedOlder) {
+    let totalFetched = 0;
+    while (true) {
       const res = await fetch(CORS + encodeURIComponent(`${NOTE_API}/v2/creators/${urlname}/contents?kind=note&page=${page}`));
       if (!res.ok) throw new Error('ユーザーが見つからないか、APIエラーが発生しました');
       const data = await res.json();
       const contents = data?.data?.contents || [];
       if (contents.length === 0) break;
+      totalFetched += contents.length;
       for (const note of contents) {
-        const pubTime = new Date(note.publishAt || note.publish_at || 0).getTime();
+        const pubRaw = note.publishAt || note.publish_at || note.published_at || note.createdAt || note.created_at || '';
+        const pubTime = pubRaw ? new Date(pubRaw).getTime() : 0;
         if (pubTime >= CUTOFF) {
           allNotes.push(note);
-        } else {
-          reachedOlder = true;
         }
       }
-      status.textContent = `記事一覧を取得中... ${allNotes.length}件（2025/9/8以降）`;
+      status.textContent = `記事一覧を取得中... ${totalFetched}件中 ${allNotes.length}件が対象（2025/9/8以降）`;
       if (data?.data?.isLastPage) break;
       page++;
     }
-    if (allNotes.length === 0) throw new Error('2025年9月8日以降の記事が見つかりませんでした。アカウント名を確認してね');
+    if (allNotes.length === 0) throw new Error(`${totalFetched}件の記事を確認しましたが、2025年9月8日以降の記事が見つかりませんでした`);
 
     let allComments = [];
     const targets = allNotes.filter(n => (n.commentCount || n.comment_count || 0) > 0);
