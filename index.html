@@ -273,14 +273,34 @@ async function fetchComments() {
       ? `${allNotes.length}件の記事のうち、コメント付き${targets.length}件からコメントを取得中...`
       : `${allNotes.length}件の記事すべてからコメントを取得中...`;
 
+    let debugErrors = 0;
+    let debugEmpty = 0;
+    let debugSuccess = 0;
     for (let i = 0; i < targets.length; i++) {
       const note = targets[i];
-      if (i > 0 && i % 5 === 0) status.textContent = `コメント取得中... (${i}/${targets.length})`;
+      if (i % 5 === 0) status.textContent = `コメント取得中... (${i}/${targets.length})`;
       try {
-        const res = await fetch(CORS + encodeURIComponent(`${NOTE_API}/v1/note/${note.id}/comments`));
-        if (!res.ok) continue;
-        const data = await res.json();
-        const comments = data?.data?.comments || [];
+        // Try multiple API endpoints
+        let comments = [];
+        const endpoints = [
+          `${NOTE_API}/v1/note/${note.id}/comments`,
+          `${NOTE_API}/v3/note_comments?note_id=${note.id}`
+        ];
+        for (const ep of endpoints) {
+          try {
+            const res = await fetch(CORS + encodeURIComponent(ep));
+            if (!res.ok) { console.warn(`[note-mgr] ${ep} returned ${res.status}`); continue; }
+            const data = await res.json();
+            console.log(`[note-mgr] Response from ${ep}:`, JSON.stringify(data).substring(0, 500));
+            // Try multiple response structures
+            comments = data?.data?.comments || data?.comments || data?.data || [];
+            if (!Array.isArray(comments)) comments = [];
+            if (comments.length > 0) break;
+          } catch(epErr) {
+            console.warn(`[note-mgr] Error for ${ep}:`, epErr.message);
+          }
+        }
+        if (comments.length === 0) { debugEmpty++; } else { debugSuccess++; }
         for (const c of comments) {
           const replies = c.replies || c.thread?.comments || [];
           const replyCount = c.replyCount ?? c.reply_count ?? replies.length;
@@ -297,9 +317,10 @@ async function fetchComments() {
           }
           allComments.push({ ...c, articleTitle: note.name, articleKey: note.key, _unreplied: isUnreplied, _apiDetected: apiHasReplyData });
         }
-      } catch(e) {}
-      await new Promise(r => setTimeout(r, 150));
+      } catch(e) { debugErrors++; console.error('[note-mgr] Outer error:', e); }
+      await new Promise(r => setTimeout(r, 200));
     }
+    console.log(`[note-mgr] Results: ${debugSuccess} with comments, ${debugEmpty} empty, ${debugErrors} errors`);
 
     const unreplied = allComments.filter(c => c._unreplied);
     document.getElementById('m-articles').textContent = allNotes.length;
