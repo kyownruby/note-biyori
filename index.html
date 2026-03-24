@@ -251,7 +251,7 @@ function extractNoteKey(url) {
 }
 
 async function fetchCommentsForNote(noteKey) {
-  const apiUrl = `https://note.com/api/v1/note/${noteKey}/comments`;
+  const apiUrl = `https://note.com/api/v3/notes/${noteKey}/note_comments`;
   const res = await fetchWithCors(apiUrl);
   if (!res || !res.ok) return [];
   try {
