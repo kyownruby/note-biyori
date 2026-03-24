@@ -96,7 +96,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <input type="text" id="urlname-input" placeholder="アカウント名（例: your_urlname）" onkeydown="if(event.key==='Enter')fetchArticles()" />
       <button class="btn primary" onclick="fetchArticles()" id="fetch-btn">取得</button>
     </div>
-    <p style="font-size:12px;color:#aaa;margin:-1rem 0 1rem 0;">RSSフィードから記事を取得し、コメント確認リンクを表示します</p>
+    <p style="font-size:12px;color:#aaa;margin:-1rem 0 1rem 0;">最新10件の記事からコメントを取得・表示します</p>
     <div id="comment-status" class="status"></div>
     <div id="summary-bar" class="summary-bar" style="display:none">
       <div class="metric"><div class="label">記事数</div><div class="value" id="m-articles">0</div></div>
@@ -242,6 +242,22 @@ function toggleHideRead() {
   });
 }
 
+function extractNoteKey(url) {
+  if (!url) return null;
+  const m = url.match(/\/n\/([a-zA-Z0-9]+)/);
+  return m ? m[1] : null;
+}
+
+async function fetchCommentsForNote(noteKey) {
+  const apiUrl = `https://note.com/api/v1/note/${noteKey}/comments`;
+  const res = await fetchWithCors(apiUrl);
+  if (!res || !res.ok) return [];
+  try {
+    const data = await res.json();
+    return data.data?.comments || [];
+  } catch(e) { return []; }
+}
+
 async function fetchArticles() {
   const urlname = document.getElementById('urlname-input').value.trim();
   if (!urlname) return;
@@ -259,35 +275,73 @@ async function fetchArticles() {
     const res = await fetchWithCors(rssUrl);
     if (!res || !res.ok) throw new Error('RSSフィードの取得に失敗しました。アカウント名を確認してください');
     const xml = await res.text();
-    const articles = parseRSS(xml);
-    if (articles.length === 0) throw new Error('記事が見つかりませんでした');
+    const allArticles = parseRSS(xml);
+    if (allArticles.length === 0) throw new Error('記事が見つかりませんでした');
+
+    // 最新10件のみに制限
+    const articles = allArticles.slice(0, 10);
+
+    status.textContent = `最新${articles.length}件の記事のコメントを取得中...（0/${articles.length}）`;
+
+    let totalComments = 0;
+    let articlesWithComments = 0;
+
+    for (let i = 0; i < articles.length; i++) {
+      const a = articles[i];
+      const noteKey = extractNoteKey(a.link);
+      let comments = [];
+      if (noteKey) {
+        comments = await fetchCommentsForNote(noteKey);
+      }
+      status.textContent = `最新${articles.length}件の記事のコメントを取得中...（${i + 1}/${articles.length}）`;
+
+      const id = feedId(a);
+      const date = a.pubDate ? new Date(a.pubDate).toLocaleDateString('ja-JP') : '';
+      const isChecked = checkedArticles.includes(id);
+      const commentUrl = a.link ? a.link + '#comments' : '#';
+
+      if (comments.length > 0) {
+        articlesWithComments++;
+        totalComments += comments.length;
+        comments.forEach(c => {
+          const cDate = c.created_at ? new Date(c.created_at).toLocaleDateString('ja-JP') : '';
+          const avatar = c.user?.user_profile_image_path || '';
+          const userName = c.user?.nickname || c.user?.urlname || '匿名';
+          list.innerHTML += `
+            <div class="comment-card ${isChecked ? 'read' : ''}" data-article-id="${id}">
+              <div class="article-title"><a href="${a.link}" target="_blank">${a.title}</a> <span style="font-size:11px;color:#bbb">${date}</span></div>
+              <div class="commenter">
+                ${avatar ? `<img class="commenter-avatar" src="${avatar}" onerror="this.style.display='none'" />` : '<div class="commenter-avatar"></div>'}
+                <span class="commenter-name">${userName}</span>
+                <span class="commenter-date">${cDate}</span>
+              </div>
+              <div class="comment-body">${c.body || ''}</div>
+              <div class="comment-actions">
+                <a class="btn-sm" href="${commentUrl}" target="_blank">noteで返信</a>
+                <button class="btn-sm ${isChecked ? 'is-read' : ''}" onclick="markChecked('${id.replace(/'/g, "\\'")}')">${isChecked ? '確認済み' : '確認済みにする'}</button>
+              </div>
+            </div>`;
+        });
+      } else {
+        list.innerHTML += `
+          <div class="comment-card ${isChecked ? 'read' : ''}" data-article-id="${id}">
+            <div class="article-title"><a href="${a.link}" target="_blank">${a.title}</a> <span style="font-size:11px;color:#bbb">${date}</span></div>
+            <div class="comment-body" style="color:#aaa;font-size:13px">コメントなし</div>
+            <div class="comment-actions">
+              <a class="btn-sm" href="${commentUrl}" target="_blank">noteで確認</a>
+              <button class="btn-sm ${isChecked ? 'is-read' : ''}" onclick="markChecked('${id.replace(/'/g, "\\'")}')">${isChecked ? '確認済み' : '確認済みにする'}</button>
+            </div>
+          </div>`;
+      }
+    }
 
     const unchecked = articles.filter(a => !checkedArticles.includes(feedId(a)));
     document.getElementById('m-articles').textContent = articles.length;
     document.getElementById('m-unreplied').textContent = unchecked.length;
     document.getElementById('summary-bar').style.display = 'flex';
 
-    if (articles.length === 0) {
-      list.innerHTML = '<div class="empty">記事が見つかりませんでした</div>';
-    } else {
-      articles.forEach(a => {
-        const id = feedId(a);
-        const date = a.pubDate ? new Date(a.pubDate).toLocaleDateString('ja-JP') : '';
-        const isChecked = checkedArticles.includes(id);
-        const commentUrl = a.link ? a.link + '#comments' : '#';
-        list.innerHTML += `
-          <div class="comment-card ${isChecked ? 'read' : ''}" id="ac-${CSS.escape(id)}" data-article-id="${id}">
-            <div class="article-title"><a href="${a.link}" target="_blank">${a.title}</a></div>
-            <div class="commenter-date" style="margin-bottom:8px">${date}</div>
-            <div class="comment-actions">
-              <a class="btn-sm" href="${commentUrl}" target="_blank">noteでコメントを確認</a>
-              <button class="btn-sm ${isChecked ? 'is-read' : ''}" onclick="markChecked('${id.replace(/'/g, "\\'")}')">${isChecked ? '確認済み' : '確認済みにする'}</button>
-            </div>
-          </div>`;
-      });
-    }
     status.className = 'status';
-    status.textContent = `完了 — ${articles.length}件の記事（未確認: ${unchecked.length}件）`;
+    status.textContent = `完了 — 最新${articles.length}件の記事から${totalComments}件のコメントを取得（${articlesWithComments}件の記事にコメントあり）`;
   } catch(e) {
     status.className = 'status error';
     status.textContent = e.message;
