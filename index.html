@@ -402,9 +402,7 @@ async function fetchArticles() {
       let page = 1;
       const perPage = 20;
       while (allNotes.length < articleCount) {
-        const remaining = articleCount - allNotes.length;
-        const per = Math.min(perPage, remaining);
-        const apiUrl = `https://note.com/api/v2/creators/${urlname}/contents?kind=note&page=${page}&per=${per}`;
+        const apiUrl = `https://note.com/api/v2/creators/${urlname}/contents?kind=note&page=${page}&per=${perPage}`;
         const res = await fetchWithCors(apiUrl);
         if (!res || !res.ok) throw new Error('記事の取得に失敗しました。アカウント名を確認してください');
         const data = await res.json();
