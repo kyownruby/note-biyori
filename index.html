@@ -212,14 +212,20 @@ function updateGroupCount(creator) {
 }
 
 function markFeedRead(id) {
-  if (!readFeeds.includes(id)) readFeeds.push(id);
-  saveReadFeeds();
   const card = document.querySelector(`[data-feed-id="${CSS.escape(id)}"]`);
+  const isRead = readFeeds.includes(id);
+  if (isRead) {
+    readFeeds.splice(readFeeds.indexOf(id), 1);
+  } else {
+    readFeeds.push(id);
+  }
+  saveReadFeeds();
   if (card) {
-    card.classList.add('read');
+    card.classList.toggle('read', !isRead);
     const btn = card.querySelector('.read-btn');
-    if (btn) { btn.textContent = '既読'; btn.classList.add('is-read'); }
-    if (hideRead) card.style.display = 'none';
+    if (btn) { btn.textContent = !isRead ? '既読' : '既読にする'; btn.classList.toggle('is-read', !isRead); }
+    if (!isRead && hideRead) card.style.display = 'none';
+    if (isRead) card.style.display = '';
     const group = card.closest('[data-creator]');
     if (group) updateGroupCount(group.dataset.creator);
   }
@@ -233,6 +239,19 @@ function markCreatorRead(creator) {
     const btn = card.querySelector('.read-btn');
     if (btn) { btn.textContent = '既読'; btn.classList.add('is-read'); }
     if (hideRead) card.style.display = 'none';
+  });
+  saveReadFeeds();
+  updateGroupCount(creator);
+}
+
+function clearCreatorRead(creator) {
+  document.querySelectorAll(`[data-group-body="${creator}"] .feed-card`).forEach(card => {
+    const id = card.dataset.feedId;
+    if (id) { const idx = readFeeds.indexOf(id); if (idx >= 0) readFeeds.splice(idx, 1); }
+    card.classList.remove('read');
+    card.style.display = '';
+    const btn = card.querySelector('.read-btn');
+    if (btn) { btn.textContent = '既読にする'; btn.classList.remove('is-read'); }
   });
   saveReadFeeds();
   updateGroupCount(creator);
@@ -549,6 +568,7 @@ async function fetchFeeds() {
           <span class="group-count">${unreadCount > 0 ? unreadCount + '件の新着' : '新着なし'}</span>
           <span class="group-actions">
             <button class="btn-sm" onclick="event.stopPropagation();markCreatorRead('${creator}')">全て既読</button>
+            <button class="btn-sm" onclick="event.stopPropagation();clearCreatorRead('${creator}')">既読をリセット</button>
           </span>
         </div>
         <div class="feed-group-body ${isCollapsed ? 'collapsed' : ''}" data-group-body="${creator}" data-creator="${creator}">`;
