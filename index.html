@@ -174,7 +174,7 @@ let checkedArticles = JSON.parse(localStorage.getItem('nc_checked') || '[]');
 let repliedComments = JSON.parse(localStorage.getItem('nc_replied') || '[]');
 let creators = JSON.parse(localStorage.getItem('nc_creators') || '[]');
 let readFeeds = JSON.parse(localStorage.getItem('nc_read_feeds') || '[]');
-let collapsedGroups = JSON.parse(localStorage.getItem('nc_collapsed_groups') || '[]');
+let expandedGroups = JSON.parse(localStorage.getItem('nc_expanded_groups') || '[]');
 let hideRead = JSON.parse(localStorage.getItem('nc_hide_read') || 'false');
 
 function switchTab(tab, el) {
@@ -187,19 +187,28 @@ function switchTab(tab, el) {
 function saveChecked() { localStorage.setItem('nc_checked', JSON.stringify(checkedArticles)); }
 function saveCreators() { localStorage.setItem('nc_creators', JSON.stringify(creators)); }
 function saveReadFeeds() { localStorage.setItem('nc_read_feeds', JSON.stringify(readFeeds)); }
-function saveCollapsed() { localStorage.setItem('nc_collapsed_groups', JSON.stringify(collapsedGroups)); }
+function saveExpanded() { localStorage.setItem('nc_expanded_groups', JSON.stringify(expandedGroups)); }
 
 function feedId(item) { return item.link || item.guid || (item.creatorName + ':' + item.title); }
 
 function toggleGroup(creator) {
-  const idx = collapsedGroups.indexOf(creator);
-  if (idx >= 0) collapsedGroups.splice(idx, 1);
-  else collapsedGroups.push(creator);
-  saveCollapsed();
+  const idx = expandedGroups.indexOf(creator);
+  if (idx >= 0) expandedGroups.splice(idx, 1);
+  else expandedGroups.push(creator);
+  saveExpanded();
   const header = document.querySelector(`[data-group="${creator}"]`);
   const body = document.querySelector(`[data-group-body="${creator}"]`);
   if (header) header.classList.toggle('collapsed');
   if (body) body.classList.toggle('collapsed');
+}
+
+function updateGroupCount(creator) {
+  const body = document.querySelector(`[data-group-body="${creator}"]`);
+  const header = document.querySelector(`[data-group="${creator}"]`);
+  if (!body || !header) return;
+  const unread = body.querySelectorAll('.feed-card:not(.read)').length;
+  const countEl = header.querySelector('.group-count');
+  if (countEl) countEl.textContent = unread > 0 ? unread + '件の新着' : '新着なし';
 }
 
 function markFeedRead(id) {
@@ -211,6 +220,8 @@ function markFeedRead(id) {
     const btn = card.querySelector('.read-btn');
     if (btn) { btn.textContent = '既読'; btn.classList.add('is-read'); }
     if (hideRead) card.style.display = 'none';
+    const group = card.closest('[data-creator]');
+    if (group) updateGroupCount(group.dataset.creator);
   }
 }
 
@@ -224,6 +235,11 @@ function markCreatorRead(creator) {
     if (hideRead) card.style.display = 'none';
   });
   saveReadFeeds();
+  updateGroupCount(creator);
+}
+
+function updateAllGroupCounts() {
+  document.querySelectorAll('[data-creator]').forEach(body => updateGroupCount(body.dataset.creator));
 }
 
 function markAllRead() {
@@ -236,6 +252,7 @@ function markAllRead() {
     if (hideRead) card.style.display = 'none';
   });
   saveReadFeeds();
+  updateAllGroupCounts();
 }
 
 function clearAllRead() {
@@ -247,6 +264,7 @@ function clearAllRead() {
     const btn = card.querySelector('.read-btn');
     if (btn) { btn.textContent = '既読にする'; btn.classList.remove('is-read'); }
   });
+  updateAllGroupCounts();
 }
 
 function toggleHideRead() {
@@ -522,17 +540,18 @@ async function fetchFeeds() {
     let html = '';
     creators.forEach(creator => {
       const items = grouped[creator] || [];
-      const isCollapsed = collapsedGroups.includes(creator);
+      const isCollapsed = !expandedGroups.includes(creator);
+      const unreadCount = items.filter(item => !readFeeds.includes(feedId(item))).length;
       html += `<div class="feed-group">
         <div class="feed-group-header ${isCollapsed ? 'collapsed' : ''}" data-group="${creator}" onclick="toggleGroup('${creator}')">
           <span class="group-toggle">▼</span>
           <span class="group-name">@${creator}</span>
-          <span class="group-count">${items.length}件</span>
+          <span class="group-count">${unreadCount > 0 ? unreadCount + '件の新着' : '新着なし'}</span>
           <span class="group-actions">
             <button class="btn-sm" onclick="event.stopPropagation();markCreatorRead('${creator}')">全て既読</button>
           </span>
         </div>
-        <div class="feed-group-body ${isCollapsed ? 'collapsed' : ''}" data-group-body="${creator}">`;
+        <div class="feed-group-body ${isCollapsed ? 'collapsed' : ''}" data-group-body="${creator}" data-creator="${creator}">`;
       if (items.length === 0) {
         html += '<div class="empty">記事を取得できませんでした</div>';
       } else {
