@@ -265,8 +265,13 @@ async function fetchComments() {
     if (allNotes.length === 0) throw new Error(`${totalFetched}件の記事を確認しましたが、2025年9月8日以降の記事が見つかりませんでした`);
 
     let allComments = [];
-    const targets = allNotes.filter(n => (n.commentCount || n.comment_count || 0) > 0);
-    status.textContent = `${allNotes.length}件の記事のうち、コメント付き${targets.length}件からコメントを取得中...`;
+    const hasCountField = allNotes.some(n => n.commentCount != null || n.comment_count != null || n.commentsCount != null);
+    const targets = hasCountField
+      ? allNotes.filter(n => (n.commentCount || n.comment_count || n.commentsCount || 0) > 0)
+      : allNotes;
+    status.textContent = hasCountField
+      ? `${allNotes.length}件の記事のうち、コメント付き${targets.length}件からコメントを取得中...`
+      : `${allNotes.length}件の記事すべてからコメントを取得中...`;
 
     for (let i = 0; i < targets.length; i++) {
       const note = targets[i];
