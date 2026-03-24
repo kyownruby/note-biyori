@@ -32,7 +32,9 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .metric { flex: 1; background: #fff; border-radius: 8px; padding: 0.75rem 1rem; border: 1px solid #eee; }
 .metric .label { font-size: 12px; color: #888; margin-bottom: 4px; }
 .metric .value { font-size: 22px; font-weight: 500; }
-.comment-card { background: #fff; border-bottom: 1px solid #eee; padding: 14px 16px; display: flex; gap: 12px; align-items: flex-start; cursor: pointer; }
+.comment-card { background: #fff; border-bottom: 1px solid #eee; padding: 14px 16px; display: flex; gap: 12px; align-items: center; cursor: pointer; }
+.replied-btn { flex-shrink: 0; margin-left: auto; padding: 4px 12px; font-size: 12px; border: 1px solid #ccc; border-radius: 4px; background: #fff; color: #666; cursor: pointer; white-space: nowrap; }
+.replied-btn:hover { background: #e8f5e9; border-color: #4caf50; color: #2e7d32; }
 .comment-card:hover { background: #f9f9f9; }
 .comment-card.read { opacity: 0.45; }
 .notif-icon { flex-shrink: 0; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; }
@@ -113,7 +115,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     <div id="comment-status" class="status"></div>
     <div id="summary-bar" class="summary-bar" style="display:none">
       <div class="metric"><div class="label">未返信</div><div class="value" id="m-articles" style="color:#E65100">0</div></div>
-      <div class="metric"><div class="label">未確認</div><div class="value" id="m-unreplied" style="color:#E65100">0</div></div>
     </div>
     <div id="comment-list"></div>
   </div>
@@ -400,14 +401,14 @@ async function fetchArticles() {
             + '<div class="notif-text"><span class="notif-name">' + userName + '</span>さんがあなたの記事にコメントしました</div>'
             + '<div class="notif-article-title">' + shortTitle + '</div>'
             + '<div class="notif-time">' + cDate + '</div>'
-            + '</div></div>';
+            + '</div>'
+            + '<button class="replied-btn" onclick="event.stopPropagation();markReplied(this)">返信済み</button>'
+            + '</div>';
         });
       }
     }
 
     document.getElementById('m-articles').textContent = totalComments;
-    const uncheckedCount = list.querySelectorAll('.comment-card:not(.read)').length;
-    document.getElementById('m-unreplied').textContent = uncheckedCount;
     document.getElementById('summary-bar').style.display = 'flex';
 
     if (totalComments === 0) {
@@ -421,6 +422,16 @@ async function fetchArticles() {
     status.textContent = e.message;
   }
   btn.disabled = false;
+}
+
+function markReplied(btn) {
+  const card = btn.closest('.comment-card');
+  if (card) {
+    card.style.display = 'none';
+    const counter = document.getElementById('m-articles');
+    const current = parseInt(counter.textContent) || 0;
+    if (current > 0) counter.textContent = current - 1;
+  }
 }
 
 function markChecked(id) {
