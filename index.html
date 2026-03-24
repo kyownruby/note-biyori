@@ -97,8 +97,16 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   <div id="comments" class="section active">
     <div class="input-row">
       <input type="text" id="urlname-input" placeholder="アカウント名（例: your_urlname）" onkeydown="if(event.key==='Enter')fetchArticles()" />
-      <input type="number" id="article-count" value="1" min="1" max="30" style="width:60px;flex:none;text-align:center" title="取得する記事数" />
-      <span style="font-size:13px;color:#888;align-self:center;flex:none">件</span>
+      <div style="display:flex;align-items:center;gap:8px;flex:none">
+        <label style="font-size:13px;color:#ccc;display:flex;align-items:center;gap:3px;cursor:pointer">
+          <input type="radio" name="fetch-mode" value="count" checked onchange="document.getElementById('article-count').disabled=false"> 件数指定
+        </label>
+        <input type="number" id="article-count" value="1" min="1" max="30" style="width:60px;flex:none;text-align:center" title="取得する記事数" />
+        <span style="font-size:13px;color:#888">件</span>
+        <label style="font-size:13px;color:#ccc;display:flex;align-items:center;gap:3px;cursor:pointer">
+          <input type="radio" name="fetch-mode" value="all" onchange="document.getElementById('article-count').disabled=true"> 全件
+        </label>
+      </div>
       <button class="btn primary" onclick="fetchArticles()" id="fetch-btn">取得</button>
     </div>
     <p style="font-size:12px;color:#aaa;margin:-1rem 0 1rem 0;">指定した件数の最新記事から未返信コメントのみを表示します</p>
@@ -316,8 +324,8 @@ async function fetchArticles() {
     const allArticles = parseRSS(xml);
     if (allArticles.length === 0) throw new Error('記事が見つかりませんでした');
 
-    const articleCount = Math.max(1, Math.min(30, parseInt(document.getElementById('article-count').value) || 5));
-    const articles = allArticles.slice(0, articleCount);
+    const fetchMode = document.querySelector('input[name="fetch-mode"]:checked').value;
+    const articles = fetchMode === 'all' ? allArticles : allArticles.slice(0, Math.max(1, Math.min(30, parseInt(document.getElementById('article-count').value) || 1)));
 
     status.textContent = `最新${articles.length}件の記事の未返信コメントを取得中...（0/${articles.length}）`;
 
