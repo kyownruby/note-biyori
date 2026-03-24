@@ -59,6 +59,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .feed-group-header .group-count { font-size: 12px; color: #888; background: #f0f0f0; border-radius: 99px; padding: 2px 8px; }
 .feed-group-header .group-actions { margin-left: auto; }
 .feed-group-body.collapsed { display: none; }
+.comment-card.read { opacity: 0.45; }
 .feed-card.read { opacity: 0.45; }
 .feed-card .read-btn { padding: 4px 10px; font-size: 11px; border: 1px solid #ddd; border-radius: 6px; cursor: pointer; background: #fff; color: #888; flex-shrink: 0; align-self: center; }
 .feed-card .read-btn:hover { background: #f0f0f0; }
@@ -92,14 +93,14 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
   <div id="comments" class="section active">
     <div class="input-row">
-      <input type="text" id="urlname-input" placeholder="アカウント名（例: your_urlname）" onkeydown="if(event.key==='Enter')fetchComments()" />
-      <button class="btn primary" onclick="fetchComments()" id="fetch-btn">取得</button>
+      <input type="text" id="urlname-input" placeholder="アカウント名（例: your_urlname）" onkeydown="if(event.key==='Enter')fetchArticles()" />
+      <button class="btn primary" onclick="fetchArticles()" id="fetch-btn">取得</button>
     </div>
+    <p style="font-size:12px;color:#aaa;margin:-1rem 0 1rem 0;">RSSフィードから記事を取得し、コメント確認リンクを表示します</p>
     <div id="comment-status" class="status"></div>
     <div id="summary-bar" class="summary-bar" style="display:none">
-      <div class="metric"><div class="label">取得した記事</div><div class="value" id="m-articles">0</div></div>
-      <div class="metric"><div class="label">コメント合計</div><div class="value" id="m-total">0</div></div>
-      <div class="metric"><div class="label">未返信</div><div class="value" id="m-unreplied" style="color:#E65100">0</div></div>
+      <div class="metric"><div class="label">記事数</div><div class="value" id="m-articles">0</div></div>
+      <div class="metric"><div class="label">未確認</div><div class="value" id="m-unreplied" style="color:#E65100">0</div></div>
     </div>
     <div id="comment-list"></div>
   </div>
@@ -128,7 +129,6 @@ const CORS_PROXIES = [
   url => 'https://corsproxy.io/?' + encodeURIComponent(url),
   url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
 ];
-const CORS = 'https://corsproxy.io/?url=';
 async function fetchWithCors(url) {
   for (const proxy of CORS_PROXIES) {
     try {
@@ -156,9 +156,7 @@ function parseRSS(xml) {
   });
   return items;
 }
-const NOTE_API = 'https://note.com/api';
-
-let repliedComments = JSON.parse(localStorage.getItem('nc_replied') || '[]');
+let checkedArticles = JSON.parse(localStorage.getItem('nc_checked') || '[]');
 let creators = JSON.parse(localStorage.getItem('nc_creators') || '[]');
 let readFeeds = JSON.parse(localStorage.getItem('nc_read_feeds') || '[]');
 let collapsedGroups = JSON.parse(localStorage.getItem('nc_collapsed_groups') || '[]');
@@ -171,7 +169,7 @@ function switchTab(tab, el) {
   document.getElementById(tab).classList.add('active');
 }
 
-function saveReplied() { localStorage.setItem('nc_replied', JSON.stringify(repliedComments)); }
+function saveChecked() { localStorage.setItem('nc_checked', JSON.stringify(checkedArticles)); }
 function saveCreators() { localStorage.setItem('nc_creators', JSON.stringify(creators)); }
 function saveReadFeeds() { localStorage.setItem('nc_read_feeds', JSON.stringify(readFeeds)); }
 function saveCollapsed() { localStorage.setItem('nc_collapsed_groups', JSON.stringify(collapsedGroups)); }
@@ -244,7 +242,7 @@ function toggleHideRead() {
   });
 }
 
-async function fetchComments() {
+async function fetchArticles() {
   const urlname = document.getElementById('urlname-input').value.trim();
   if (!urlname) return;
   const status = document.getElementById('comment-status');
@@ -254,129 +252,42 @@ async function fetchComments() {
   list.innerHTML = '';
   document.getElementById('summary-bar').style.display = 'none';
   status.className = 'status loading';
-  status.textContent = '記事一覧を取得中...';
+  status.textContent = 'RSSフィードから記事を取得中...';
 
   try {
-    const CUTOFF = new Date('2025-09-08T10:00:00+09:00').getTime();
-    let allNotes = [];
-    let page = 1;
-    let totalFetched = 0;
-    while (true) {
-      const res = await fetchWithCors(`${NOTE_API}/v2/creators/${urlname}/contents?kind=note&page=${page}`);
-      if (!res || !res.ok) throw new Error('ユーザーが見つからないか、APIエラーが発生しました');
-      const data = await res.json();
-      const contents = data?.data?.contents || [];
-      if (contents.length === 0) break;
-      totalFetched += contents.length;
-      for (const note of contents) {
-        const pubRaw = note.publishAt || note.publish_at || note.published_at || note.createdAt || note.created_at || '';
-        const pubTime = pubRaw ? new Date(pubRaw).getTime() : 0;
-        if (pubTime >= CUTOFF) {
-          allNotes.push(note);
-        }
-      }
-      status.textContent = `記事一覧を取得中... ${totalFetched}件中 ${allNotes.length}件が対象（2025/9/8以降）`;
-      if (data?.data?.isLastPage) break;
-      page++;
-    }
-    if (allNotes.length === 0) throw new Error(`${totalFetched}件の記事を確認しましたが、2025年9月8日以降の記事が見つかりませんでした`);
+    const rssUrl = `https://note.com/${urlname}/rss`;
+    const res = await fetchWithCors(rssUrl);
+    if (!res || !res.ok) throw new Error('RSSフィードの取得に失敗しました。アカウント名を確認してください');
+    const xml = await res.text();
+    const articles = parseRSS(xml);
+    if (articles.length === 0) throw new Error('記事が見つかりませんでした');
 
-    let allComments = [];
-    const hasCountField = allNotes.some(n => n.commentCount != null || n.comment_count != null || n.commentsCount != null);
-    const targets = hasCountField
-      ? allNotes.filter(n => (n.commentCount || n.comment_count || n.commentsCount || 0) > 0)
-      : allNotes;
-    status.textContent = hasCountField
-      ? `${allNotes.length}件の記事のうち、コメント付き${targets.length}件からコメントを取得中...`
-      : `${allNotes.length}件の記事すべてからコメントを取得中...`;
-
-    let debugErrors = 0;
-    let debugEmpty = 0;
-    let debugSuccess = 0;
-    let firstResponse = null;
-    for (let i = 0; i < targets.length; i++) {
-      const note = targets[i];
-      if (i % 5 === 0) status.textContent = `コメント取得中... (${i}/${targets.length}) [成功:${debugSuccess} 空:${debugEmpty} エラー:${debugErrors}]`;
-      try {
-        let comments = [];
-        const commentUrl = `${NOTE_API}/v1/note/${note.id}/comments`;
-        const res = await fetchWithCors(commentUrl);
-        if (!res) { debugErrors++; continue; }
-        if (!res.ok) {
-          debugErrors++;
-          if (i < 3) console.warn(`[note-mgr] ${commentUrl} HTTP ${res.status}`, await res.text().catch(() => ''));
-          continue;
-        }
-        const data = await res.json();
-        if (!firstResponse) {
-          firstResponse = JSON.stringify(data).substring(0, 300);
-          console.log('[note-mgr] First comment API response:', firstResponse);
-        }
-        // Try multiple response structures
-        comments = data?.data?.comments || data?.comments || [];
-        if (!Array.isArray(comments)) comments = [];
-        if (comments.length === 0) { debugEmpty++; } else { debugSuccess++; }
-        for (const c of comments) {
-          const replies = c.replies || c.thread?.comments || [];
-          const replyCount = c.replyCount ?? c.reply_count ?? replies.length;
-          const hasOwnerReply = replies.some(r => {
-            const rUrlname = r.user?.urlname || r.user?.url_name || '';
-            return rUrlname === urlname;
-          });
-          const apiHasReplyData = Array.isArray(c.replies) || c.thread || c.replyCount != null || c.reply_count != null;
-          let isUnreplied;
-          if (apiHasReplyData) {
-            isUnreplied = replyCount === 0 || !hasOwnerReply;
-          } else {
-            isUnreplied = !repliedComments.includes(c.id);
-          }
-          allComments.push({ ...c, articleTitle: note.name, articleKey: note.key, _unreplied: isUnreplied, _apiDetected: apiHasReplyData });
-        }
-      } catch(e) { debugErrors++; console.error('[note-mgr] Error:', e); }
-      await new Promise(r => setTimeout(r, 200));
-    }
-    console.log(`[note-mgr] Results: ${debugSuccess} with comments, ${debugEmpty} empty, ${debugErrors} errors`);
-    if (firstResponse) console.log('[note-mgr] First response sample:', firstResponse);
-
-    const unreplied = allComments.filter(c => c._unreplied);
-    document.getElementById('m-articles').textContent = allNotes.length;
-    document.getElementById('m-total').textContent = allComments.length;
-    document.getElementById('m-unreplied').textContent = unreplied.length;
+    const unchecked = articles.filter(a => !checkedArticles.includes(feedId(a)));
+    document.getElementById('m-articles').textContent = articles.length;
+    document.getElementById('m-unreplied').textContent = unchecked.length;
     document.getElementById('summary-bar').style.display = 'flex';
 
-    if (unreplied.length === 0) {
-      list.innerHTML = '<div class="empty">未返信のコメントはありません</div>';
+    if (articles.length === 0) {
+      list.innerHTML = '<div class="empty">記事が見つかりませんでした</div>';
     } else {
-      unreplied.forEach(c => {
-        const date = new Date(c.createdAt || c.created_at || Date.now()).toLocaleDateString('ja-JP');
-        const avatar = c.user?.userProfileImagePath || c.user?.user_profile_image_path || '';
-        const name = c.user?.nickname || '不明';
-        const comment = c.body || c.comment || '';
-        const articleUrl = `https://note.com/${urlname}/n/${c.articleKey}`;
-        const markBtn = c._apiDetected
-          ? ''
-          : `<button class="btn-sm" onclick="markReplied(${c.id})">返信済みにする</button>`;
+      articles.forEach(a => {
+        const id = feedId(a);
+        const date = a.pubDate ? new Date(a.pubDate).toLocaleDateString('ja-JP') : '';
+        const isChecked = checkedArticles.includes(id);
+        const commentUrl = a.link ? a.link + '#comments' : '#';
         list.innerHTML += `
-          <div class="comment-card" id="cc-${c.id}">
-            <div class="article-title"><a href="${articleUrl}" target="_blank">${c.articleTitle}</a></div>
-            <div class="commenter">
-              ${avatar ? `<img class="commenter-avatar" src="${avatar}" onerror="this.style.display='none'" />` : ''}
-              <div>
-                <div class="commenter-name">${name}</div>
-                <div class="commenter-date">${date}</div>
-              </div>
-            </div>
-            <div class="comment-body">${comment}</div>
+          <div class="comment-card ${isChecked ? 'read' : ''}" id="ac-${CSS.escape(id)}" data-article-id="${id}">
+            <div class="article-title"><a href="${a.link}" target="_blank">${a.title}</a></div>
+            <div class="commenter-date" style="margin-bottom:8px">${date}</div>
             <div class="comment-actions">
-              ${markBtn}
-              <a class="btn-sm" href="${articleUrl}#comments" target="_blank">noteで返信</a>
+              <a class="btn-sm" href="${commentUrl}" target="_blank">noteでコメントを確認</a>
+              <button class="btn-sm ${isChecked ? 'is-read' : ''}" onclick="markChecked('${id.replace(/'/g, "\\'")}')">${isChecked ? '確認済み' : '確認済みにする'}</button>
             </div>
           </div>`;
       });
     }
     status.className = 'status';
-    const debugInfo = debugErrors > 0 ? ` (API応答: 成功${debugSuccess} 空${debugEmpty} エラー${debugErrors})` : '';
-    status.textContent = `完了 — 未返信コメント ${unreplied.length}件${debugInfo}`;
+    status.textContent = `完了 — ${articles.length}件の記事（未確認: ${unchecked.length}件）`;
   } catch(e) {
     status.className = 'status error';
     status.textContent = e.message;
@@ -384,11 +295,15 @@ async function fetchComments() {
   btn.disabled = false;
 }
 
-function markReplied(id) {
-  if (!repliedComments.includes(id)) repliedComments.push(id);
-  saveReplied();
-  const card = document.getElementById('cc-' + id);
-  if (card) card.remove();
+function markChecked(id) {
+  if (!checkedArticles.includes(id)) checkedArticles.push(id);
+  saveChecked();
+  const card = document.querySelector(`[data-article-id="${CSS.escape(id)}"]`);
+  if (card) {
+    card.classList.add('read');
+    const btn = card.querySelector('.btn-sm:last-child');
+    if (btn) { btn.textContent = '確認済み'; btn.classList.add('is-read'); }
+  }
   const el = document.getElementById('m-unreplied');
   el.textContent = Math.max(0, parseInt(el.textContent) - 1);
 }
