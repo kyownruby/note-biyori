@@ -94,9 +94,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   <div id="comments" class="section active">
     <div class="input-row">
       <input type="text" id="urlname-input" placeholder="アカウント名（例: your_urlname）" onkeydown="if(event.key==='Enter')fetchArticles()" />
+      <input type="number" id="article-count" value="5" min="1" max="30" style="width:60px;flex:none;text-align:center" title="取得する記事数" />
+      <span style="font-size:13px;color:#888;align-self:center;flex:none">件</span>
       <button class="btn primary" onclick="fetchArticles()" id="fetch-btn">取得</button>
     </div>
-    <p style="font-size:12px;color:#aaa;margin:-1rem 0 1rem 0;">最新5件の記事から未返信コメントのみを表示します</p>
+    <p style="font-size:12px;color:#aaa;margin:-1rem 0 1rem 0;">指定した件数の最新記事から未返信コメントのみを表示します</p>
     <div id="comment-status" class="status"></div>
     <div id="summary-bar" class="summary-bar" style="display:none">
       <div class="metric"><div class="label">未返信</div><div class="value" id="m-articles" style="color:#E65100">0</div></div>
@@ -289,8 +291,8 @@ async function fetchArticles() {
     const allArticles = parseRSS(xml);
     if (allArticles.length === 0) throw new Error('記事が見つかりませんでした');
 
-    // 最新5件のみに制限
-    const articles = allArticles.slice(0, 5);
+    const articleCount = Math.max(1, Math.min(30, parseInt(document.getElementById('article-count').value) || 5));
+    const articles = allArticles.slice(0, articleCount);
 
     status.textContent = `最新${articles.length}件の記事の未返信コメントを取得中...（0/${articles.length}）`;
 
