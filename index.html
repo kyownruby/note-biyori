@@ -24,6 +24,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .btn:hover { background: #f5f5f5; }
 .btn.primary { background: #41C9B4; border-color: #41C9B4; color: white; }
 .btn.primary:hover { background: #2db8a0; }
+.btn.cancel { background: #e53935; border-color: #e53935; color: white; }
+.btn.cancel:hover { background: #c62828; }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .status { font-size: 13px; color: #888; margin-bottom: 1rem; min-height: 20px; }
 .status.error { color: #e53935; }
@@ -174,6 +176,7 @@ function parseRSS(xml) {
 }
 let checkedArticles = JSON.parse(localStorage.getItem('nc_checked') || '[]');
 let repliedComments = JSON.parse(localStorage.getItem('nc_replied') || '[]');
+let fetchCancelled = false;
 let creators = JSON.parse(localStorage.getItem('nc_creators') || '[]');
 let readFeeds = JSON.parse(localStorage.getItem('nc_read_feeds') || '[]');
 let expandedGroups = JSON.parse(localStorage.getItem('nc_expanded_groups') || '[]');
@@ -350,6 +353,7 @@ async function fetchAllArticlesViaAPI(urlname, statusEl) {
   const articles = [];
   let page = 1;
   while (true) {
+    if (fetchCancelled) break;
     statusEl.textContent = `全記事を取得中...（${articles.length}件取得済、ページ${page}）`;
     const apiUrl = `https://note.com/api/v2/creators/${urlname}/contents?kind=note&page=${page}&per=20`;
     const res = await fetchWithCors(apiUrl);
@@ -376,13 +380,19 @@ async function fetchAllArticlesViaAPI(urlname, statusEl) {
   return articles;
 }
 
+function cancelFetch() {
+  fetchCancelled = true;
+}
 async function fetchArticles() {
   const urlname = document.getElementById('urlname-input').value.trim();
   if (!urlname) return;
   const status = document.getElementById('comment-status');
   const list = document.getElementById('comment-list');
   const btn = document.getElementById('fetch-btn');
-  btn.disabled = true;
+  fetchCancelled = false;
+  btn.textContent = '中止';
+  btn.classList.add('cancel');
+  btn.onclick = cancelFetch;
   list.innerHTML = '';
   document.getElementById('summary-bar').style.display = 'none';
   status.className = 'status loading';
@@ -394,6 +404,7 @@ async function fetchArticles() {
     if (fetchMode === 'all') {
       status.textContent = '全記事を取得中...';
       articles = await fetchAllArticlesViaAPI(urlname, status);
+      if (fetchCancelled) throw new Error('取得を中止しました');
       if (articles.length === 0) throw new Error('記事が見つかりませんでした');
     } else {
       const countEl = document.getElementById('article-count');
@@ -404,6 +415,7 @@ async function fetchArticles() {
       let page = 1;
       const perPage = 20;
       while (allNotes.length < articleCount) {
+        if (fetchCancelled) throw new Error('取得を中止しました');
         const apiUrl = `https://note.com/api/v2/creators/${urlname}/contents?kind=note&page=${page}&per=${perPage}`;
         const res = await fetchWithCors(apiUrl);
         if (!res || !res.ok) throw new Error('記事の取得に失敗しました。アカウント名を確認してください');
@@ -414,6 +426,7 @@ async function fetchArticles() {
         if (data.data?.is_last_page) break;
         page++;
       }
+      if (fetchCancelled) throw new Error('取得を中止しました');
       if (allNotes.length === 0) throw new Error('記事が見つかりませんでした');
       articles = allNotes.slice(0, articleCount).map(n => ({
         title: n.name || n.title || '',
@@ -430,11 +443,13 @@ async function fetchArticles() {
     let articlesWithComments = 0;
 
     for (let i = 0; i < articles.length; i++) {
+      if (fetchCancelled) throw new Error('取得を中止しました');
       const a = articles[i];
       const noteKey = extractNoteKey(a.link);
       let comments = [];
       if (noteKey) {
         const allComments = await fetchCommentsForNote(noteKey);
+        if (fetchCancelled) throw new Error('取得を中止しました');
         comments = filterUnrepliedComments(allComments, urlname);
       }
       status.textContent = `${articles.length}件の記事の未返信コメントを取得中...（${i + 1}/${articles.length}）`;
@@ -477,10 +492,12 @@ async function fetchArticles() {
     status.className = 'status';
     status.textContent = `完了 — 最新${articles.length}件の記事から${totalComments}件の未返信コメントを検出`;
   } catch(e) {
-    status.className = 'status error';
+    status.className = 'status' + (fetchCancelled ? '' : ' error');
     status.textContent = e.message;
   }
-  btn.disabled = false;
+  btn.textContent = '取得';
+  btn.classList.remove('cancel');
+  btn.onclick = function() { fetchArticles(); };
 }
 
 function markReplied(btn) {
