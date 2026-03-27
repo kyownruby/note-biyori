@@ -62,6 +62,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .feed-group-header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; padding-bottom: 6px; border-bottom: 2px solid #41C9B4; cursor: pointer; user-select: none; }
 .feed-group-header .group-toggle { font-size: 12px; color: #888; transition: transform 0.2s; display: inline-block; }
 .feed-group-header.collapsed .group-toggle { transform: rotate(-90deg); }
+.feed-group-header .group-avatar { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
 .feed-group-header .group-name { font-size: 15px; font-weight: 600; color: #333; }
 .feed-group-header .group-count { font-size: 12px; color: #888; background: #f0f0f0; border-radius: 99px; padding: 2px 8px; }
 .feed-group-header .group-actions { margin-left: auto; }
@@ -566,6 +567,7 @@ async function fetchFeeds() {
   list.innerHTML = '';
 
   let allItems = [];
+  const creatorProfiles = {};
   for (const creator of creators) {
     try {
       const rssUrl = `https://note.com/${creator}/rss`;
@@ -575,6 +577,15 @@ async function fetchFeeds() {
       const items = parseRSS(xml);
       items.forEach(item => allItems.push({ ...item, creatorName: creator }));
     } catch(e) {}
+    try {
+      const profileRes = await fetchWithCors(`https://note.com/api/v2/creators/${creator}`);
+      if (profileRes && profileRes.ok) {
+        const profileData = await profileRes.json();
+        const u = profileData.data;
+        creatorProfiles[creator] = { nickname: u.nickname || u.name || creator, avatar: u.user_profile_image_path || '' };
+      }
+    } catch(e) {}
+    if (!creatorProfiles[creator]) creatorProfiles[creator] = { nickname: creator, avatar: '' };
   }
 
   if (allItems.length === 0) {
@@ -601,7 +612,8 @@ async function fetchFeeds() {
       html += `<div class="feed-group">
         <div class="feed-group-header ${isCollapsed ? 'collapsed' : ''}" data-group="${creator}" onclick="toggleGroup('${creator}')">
           <span class="group-toggle">▼</span>
-          <span class="group-name">@${creator}</span>
+          ${creatorProfiles[creator].avatar ? `<img class="group-avatar" src="${creatorProfiles[creator].avatar}" onerror="this.style.display='none'" />` : ''}
+          <span class="group-name">${creatorProfiles[creator].nickname}</span>
           <span class="group-count">${unreadCount > 0 ? unreadCount + '件の新着' : '新着なし'}</span>
           <span class="group-actions">
             <button class="btn-sm" onclick="event.stopPropagation();markCreatorRead('${creator}')">全て既読</button>
