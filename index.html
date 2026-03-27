@@ -582,7 +582,7 @@ async function fetchFeeds() {
       if (profileRes && profileRes.ok) {
         const profileData = await profileRes.json();
         const u = profileData.data;
-        creatorProfiles[creator] = { nickname: u.nickname || u.name || creator, avatar: u.user_profile_image_path || '' };
+        creatorProfiles[creator] = { nickname: u.nickname || u.name || creator, avatar: u.profileImageUrl || '' };
       }
     } catch(e) {}
     if (!creatorProfiles[creator]) creatorProfiles[creator] = { nickname: creator, avatar: '' };
