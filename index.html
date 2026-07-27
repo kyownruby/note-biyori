@@ -89,10 +89,33 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .user-chip { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #555; }
 .user-chip img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
 .sync-note { font-size: 11px; color: #aaa; }
+.login-screen { position: fixed; inset: 0; background: #f7f7f5; display: flex; align-items: center; justify-content: center; z-index: 100; padding: 1rem; }
+.login-screen.hidden { display: none; }
+.login-card { background: #fff; border: 1px solid #eee; border-radius: 16px; padding: 2.5rem 2rem; width: 100%; max-width: 360px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.05); }
+.login-card .logo { margin: 0 auto 14px; width: 56px; height: 56px; border-radius: 14px; }
+.login-card .logo svg { width: 32px; height: 32px; }
+.login-card h2 { font-size: 18px; font-weight: 500; margin-bottom: 8px; }
+.login-card p { font-size: 13px; color: #888; line-height: 1.6; margin-bottom: 1.5rem; }
+.google-btn { width: 100%; padding: 12px; font-size: 14px; }
+.login-status { font-size: 12px; color: #F2A0B5; min-height: 18px; margin-top: 10px; }
+.guest-link { font-size: 12px; color: #aaa; margin-top: 8px; display: inline-block; cursor: pointer; text-decoration: underline; }
+.guest-link:hover { color: #888; }
 .empty { text-align: center; padding: 2rem; color: #aaa; font-size: 14px; }
 </style>
 </head>
 <body>
+<div class="login-screen" id="login-screen">
+  <div class="login-card">
+    <div class="logo">
+      <svg viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/><path d="M14.5 9.5l1.5-1.5 1.5 1.5M16 8v5" fill="none" stroke="white" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </div>
+    <h2>のーとびより β</h2>
+    <p>Googleアカウントでログインすると、<br>noteIDや既読状態を複数の端末で同期できます</p>
+    <button class="btn primary google-btn" onclick="window.fbLogin ? fbLogin() : alert('読み込み中です。少し待ってからもう一度試してください')">Googleでログイン</button>
+    <div class="login-status" id="login-status">ログイン状態を確認中...</div>
+    <a class="guest-link" onclick="enterGuestMode()">ログインせずに使う</a>
+  </div>
+</div>
 <div class="app">
   <div class="header">
     <div class="logo">
@@ -100,7 +123,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
     </div>
     <h1>のーとびより β</h1>
     <div class="auth-area">
-      <button class="btn" id="login-btn" onclick="fbLogin()">Googleでログイン</button>
       <div class="user-chip" id="user-chip" style="display:none">
         <img id="user-avatar" alt="" />
         <span id="user-note-id"></span>
@@ -225,6 +247,12 @@ let expandedGroups = JSON.parse(localStorage.getItem('nc_expanded_groups') || '[
 let hideRead = JSON.parse(localStorage.getItem('nc_hide_read') || 'false');
 let registeredArticles = JSON.parse(localStorage.getItem('nc_registered') || '[]');
 let feedCache = JSON.parse(localStorage.getItem('nc_feed_cache') || 'null');
+
+let guestMode = false;
+function enterGuestMode() {
+  guestMode = true;
+  document.getElementById('login-screen').classList.add('hidden');
+}
 
 function switchTab(tab, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -815,6 +843,13 @@ if (feedCache && Array.isArray(feedCache.items) && feedCache.items.length > 0) {
   document.getElementById('feed-status').textContent = '前回取得した記事一覧を表示中';
 }
 if (creators.length > 0) fetchFeeds();
+// ログイン機能（Firebase）が読み込めない場合の案内
+setTimeout(() => {
+  if (!window.fbLogin) {
+    const s = document.getElementById('login-status');
+    if (s) s.textContent = 'ログイン機能を読み込めませんでした。「ログインせずに使う」から利用できます';
+  }
+}, 6000);
 </script>
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js';
@@ -865,13 +900,17 @@ window.scheduleSync = () => {
 
 window.fbLogin = async () => {
   const provider = new GoogleAuthProvider();
+  const loginStatus = document.getElementById('login-status');
+  loginStatus.textContent = 'ログイン処理中...';
   try {
     await signInWithPopup(auth, provider);
   } catch(e) {
-    if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
-      try { await signInWithRedirect(auth, provider); } catch(e2) { alert('ログインに失敗しました: ' + e2.message); }
+    if (e.code === 'auth/popup-blocked' || e.code === 'auth/cancelled-popup-request') {
+      try { await signInWithRedirect(auth, provider); } catch(e2) { loginStatus.textContent = 'ログインに失敗しました: ' + e2.message; }
+    } else if (e.code === 'auth/popup-closed-by-user') {
+      loginStatus.textContent = '';
     } else {
-      alert('ログインに失敗しました: ' + e.message);
+      loginStatus.textContent = 'ログインに失敗しました: ' + e.message;
     }
   }
 };
@@ -880,6 +919,7 @@ window.fbLogout = async () => {
   clearTimeout(syncTimer);
   await pushState(); // 未送信の変更を保存してからログアウト
   syncReady = false;
+  guestMode = false; // ログアウト後はログイン画面に戻す
   await signOut(auth);
 };
 
@@ -895,14 +935,19 @@ window.changeNoteId = () => {
 };
 
 function updateAuthUI(user) {
-  document.getElementById('login-btn').style.display = user ? 'none' : '';
+  const loginScreen = document.getElementById('login-screen');
   document.getElementById('user-chip').style.display = user ? 'flex' : 'none';
   if (user) {
+    loginScreen.classList.add('hidden');
     const avatar = document.getElementById('user-avatar');
     avatar.src = user.photoURL || '';
     avatar.style.display = user.photoURL ? '' : 'none';
     const noteId = localStorage.getItem('nc_note_id') || '';
     document.getElementById('user-note-id').textContent = noteId ? '@' + noteId : (user.displayName || '');
+  } else {
+    document.getElementById('login-status').textContent = '';
+    // ゲスト利用中はログイン画面を再表示しない
+    if (!guestMode) loginScreen.classList.remove('hidden');
   }
 }
 
@@ -958,6 +1003,7 @@ onAuthStateChanged(auth, async user => {
   updateAuthUI(user);
   if (!user) { syncReady = false; return; }
   try {
+    document.getElementById('login-status').textContent = 'アカウント情報を同期中...';
     await applyRemoteState(user);
     syncReady = true;
     updateAuthUI(user);
