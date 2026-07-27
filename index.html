@@ -83,6 +83,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .creator-tag { display: flex; align-items: center; gap: 4px; padding: 4px 10px; background: #f0f0f0; border-radius: 99px; font-size: 13px; }
 .creator-tag button { background: none; border: none; cursor: pointer; color: #aaa; font-size: 14px; padding: 0; line-height: 1; }
 .creator-tag button:hover { color: #e53935; }
+.creator-tag .drag-handle { cursor: grab; color: #bbb; font-size: 14px; padding: 0 2px; touch-action: none; user-select: none; }
+.creator-tag.dragging { opacity: 0.5; }
 .empty { text-align: center; padding: 2rem; color: #aaa; font-size: 14px; }
 </style>
 </head>
@@ -116,6 +118,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <button class="btn primary" onclick="fetchArticles()" id="fetch-btn">取得</button>
     </div>
     <p style="font-size:12px;color:#aaa;margin:-1rem 0 1rem 0;">件数指定: 最新の公開記事から指定件数を取得（最大50件） ／ 全件: 2025/9/8以降の全記事を取得</p>
+    <div class="input-row">
+      <input type="text" id="article-url-input" placeholder="記事URLで個別登録（例: https://note.com/xxx/n/xxxxx）" onkeydown="if(event.key==='Enter')registerArticle()" />
+      <button class="btn" onclick="registerArticle()">登録</button>
+    </div>
+    <div id="registered-tags" class="creator-tags"></div>
     <div id="comment-status" class="status"></div>
     <div id="summary-bar" class="summary-bar" style="display:none">
       <div class="metric"><div class="label">未返信</div><div class="value" id="m-articles" style="color:#E65100">0</div></div>
@@ -203,6 +210,8 @@ let creators = JSON.parse(localStorage.getItem('nc_creators') || '[]');
 let readFeeds = JSON.parse(localStorage.getItem('nc_read_feeds') || '[]');
 let expandedGroups = JSON.parse(localStorage.getItem('nc_expanded_groups') || '[]');
 let hideRead = JSON.parse(localStorage.getItem('nc_hide_read') || 'false');
+let registeredArticles = JSON.parse(localStorage.getItem('nc_registered') || '[]');
+let feedCache = JSON.parse(localStorage.getItem('nc_feed_cache') || 'null');
 
 function switchTab(tab, el) {
   document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -216,7 +225,59 @@ function saveCreators() { localStorage.setItem('nc_creators', JSON.stringify(cre
 function saveReadFeeds() { localStorage.setItem('nc_read_feeds', JSON.stringify(readFeeds)); }
 function saveExpanded() { localStorage.setItem('nc_expanded_groups', JSON.stringify(expandedGroups)); }
 
+function saveRegistered() { localStorage.setItem('nc_registered', JSON.stringify(registeredArticles)); }
+function esc(s) { return String(s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
+
 function feedId(item) { return item.link || item.guid || (item.creatorName + ':' + item.title); }
+
+function extractUrlnameFromUrl(url) {
+  const m = url.match(/note\.com\/([^\/]+)\/n\//);
+  return m ? m[1] : null;
+}
+
+function renderRegisteredTags() {
+  document.getElementById('registered-tags').innerHTML = registeredArticles.map((a, i) => `
+    <div class="creator-tag" title="${esc(a.url)}">
+      <span>📄 ${esc(truncateTitle(a.title || a.key, 24))}</span>
+      <button onclick="removeRegistered(${i})">×</button>
+    </div>`).join('');
+}
+
+function removeRegistered(i) {
+  registeredArticles.splice(i, 1);
+  saveRegistered();
+  renderRegisteredTags();
+}
+
+async function registerArticle() {
+  const input = document.getElementById('article-url-input');
+  const status = document.getElementById('comment-status');
+  const url = input.value.trim();
+  if (!url) return;
+  const key = extractNoteKey(url);
+  const urlname = extractUrlnameFromUrl(url);
+  if (!key || !urlname) {
+    status.className = 'status error';
+    status.textContent = '記事URLの形式が正しくありません（例: https://note.com/xxx/n/xxxxx）';
+    return;
+  }
+  if (registeredArticles.some(a => a.key === key)) { input.value = ''; return; }
+  const entry = { key, urlname, url: `https://note.com/${urlname}/n/${key}`, title: '' };
+  registeredArticles.push(entry);
+  saveRegistered();
+  renderRegisteredTags();
+  input.value = '';
+  status.className = 'status';
+  status.textContent = '記事を登録しました';
+  try {
+    const res = await fetchWithCors(`https://note.com/api/v3/notes/${key}`);
+    if (res && res.ok) {
+      const data = await res.json();
+      const t = data.data?.name || data.data?.note?.name || '';
+      if (t) { entry.title = t; saveRegistered(); renderRegisteredTags(); }
+    }
+  } catch(e) {}
+}
 
 function toggleGroup(creator) {
   const idx = expandedGroups.indexOf(creator);
@@ -382,7 +443,7 @@ function cancelFetch() {
 }
 async function fetchArticles() {
   const urlname = document.getElementById('urlname-input').value.trim();
-  if (!urlname) return;
+  if (!urlname && registeredArticles.length === 0) return;
   const status = document.getElementById('comment-status');
   const list = document.getElementById('comment-list');
   const btn = document.getElementById('fetch-btn');
@@ -397,8 +458,10 @@ async function fetchArticles() {
   const fetchMode = document.querySelector('input[name="fetch-mode"]:checked').value;
 
   try {
-    let articles;
-    if (fetchMode === 'all') {
+    let articles = [];
+    if (!urlname) {
+      // noteID未入力：登録記事のみチェック
+    } else if (fetchMode === 'all') {
       status.textContent = '全記事を取得中...';
       articles = await fetchAllArticlesViaAPI(urlname, status);
       if (fetchCancelled) throw new Error('取得を中止しました');
@@ -434,22 +497,40 @@ async function fetchArticles() {
       }));
     }
 
+    // URLで個別登録した記事を合流（重複はスキップ）
+    const existingKeys = new Set(articles.map(a => extractNoteKey(a.link)));
+    registeredArticles.forEach(r => {
+      if (existingKeys.has(r.key)) return;
+      articles.push({ title: r.title || r.key, link: r.url, pubDate: '', thumbnail: '', description: '', owner: r.urlname });
+    });
+    if (articles.length === 0) throw new Error('記事が見つかりませんでした');
+
     status.textContent = `${articles.length}件の記事の未返信コメントを取得中...（0/${articles.length}）`;
+
+    // コメント取得を並列化（同時5件まで）
+    const COMMENT_CONCURRENCY = 5;
+    const commentsResults = new Array(articles.length);
+    let doneCount = 0;
+    let nextIndex = 0;
+    async function commentWorker() {
+      while (true) {
+        const idx = nextIndex++;
+        if (idx >= articles.length || fetchCancelled) return;
+        const noteKey = extractNoteKey(articles[idx].link);
+        commentsResults[idx] = noteKey ? await fetchCommentsForNote(noteKey) : [];
+        doneCount++;
+        status.textContent = `${articles.length}件の記事の未返信コメントを取得中...（${doneCount}/${articles.length}）`;
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(COMMENT_CONCURRENCY, articles.length) }, commentWorker));
+    if (fetchCancelled) throw new Error('取得を中止しました');
 
     let totalComments = 0;
     let articlesWithComments = 0;
 
     for (let i = 0; i < articles.length; i++) {
-      if (fetchCancelled) throw new Error('取得を中止しました');
       const a = articles[i];
-      const noteKey = extractNoteKey(a.link);
-      let comments = [];
-      if (noteKey) {
-        const allComments = await fetchCommentsForNote(noteKey);
-        if (fetchCancelled) throw new Error('取得を中止しました');
-        comments = filterUnrepliedComments(allComments, urlname);
-      }
-      status.textContent = `${articles.length}件の記事の未返信コメントを取得中...（${i + 1}/${articles.length}）`;
+      const comments = filterUnrepliedComments(commentsResults[i] || [], a.owner || urlname);
 
       const id = feedId(a);
       const date = a.pubDate ? new Date(a.pubDate).toLocaleDateString('ja-JP') : '';
@@ -527,10 +608,46 @@ function markChecked(id) {
 
 function renderCreatorTags() {
   document.getElementById('creator-tags').innerHTML = creators.map(c => `
-    <div class="creator-tag">
+    <div class="creator-tag" data-creator-tag="${c}">
+      <span class="drag-handle" onpointerdown="startDrag(event)">⠿</span>
       <span>@${c}</span>
       <button onclick="removeCreator('${c}')">×</button>
     </div>`).join('');
+}
+
+function startDrag(e) {
+  e.preventDefault();
+  const handle = e.target;
+  const tag = handle.closest('.creator-tag');
+  if (!tag) return;
+  const container = tag.parentNode;
+  tag.classList.add('dragging');
+  // タグをDOM移動するとポインターキャプチャが外れるため、リスナーはdocumentに付ける
+  const move = ev => {
+    ev.preventDefault();
+    const el = document.elementFromPoint(ev.clientX, ev.clientY);
+    const over = el ? el.closest('.creator-tag') : null;
+    if (over && over !== tag && over.parentNode === container) {
+      const tags = [...container.children];
+      if (tags.indexOf(tag) < tags.indexOf(over)) container.insertBefore(tag, over.nextSibling);
+      else container.insertBefore(tag, over);
+    }
+  };
+  const up = () => {
+    document.removeEventListener('pointermove', move);
+    document.removeEventListener('pointerup', up);
+    document.removeEventListener('pointercancel', up);
+    tag.classList.remove('dragging');
+    const newOrder = [...container.querySelectorAll('.creator-tag')].map(t => t.dataset.creatorTag);
+    if (newOrder.join(',') !== creators.join(',')) {
+      creators = newOrder;
+      saveCreators();
+      if (feedCache && Array.isArray(feedCache.items)) renderFeedList(feedCache.items, feedCache.profiles || {});
+    }
+  };
+  document.addEventListener('pointermove', move);
+  document.addEventListener('pointerup', up);
+  document.addEventListener('pointercancel', up);
 }
 
 function addCreator() {
@@ -560,7 +677,6 @@ async function fetchFeeds() {
   btn.disabled = true;
   status.className = 'status loading';
   status.textContent = 'フィードを取得中...';
-  list.innerHTML = '';
 
   let allItems = [];
   const creatorProfiles = {};
@@ -594,67 +710,92 @@ async function fetchFeeds() {
   }
 
   if (allItems.length === 0) {
-    list.innerHTML = '<div class="empty">記事が取得できませんでした</div>';
-  } else {
-    const grouped = {};
-    creators.forEach(c => { grouped[c] = []; });
-    allItems.forEach(item => {
-      if (!grouped[item.creatorName]) grouped[item.creatorName] = [];
-      grouped[item.creatorName].push(item);
-    });
-    Object.keys(grouped).forEach(creator => {
-      grouped[creator].sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
-    });
-
-    document.getElementById('feed-toolbar').style.display = 'flex';
-    document.getElementById('hide-read-toggle').checked = hideRead;
-
-    let html = '';
-    creators.forEach(creator => {
-      const items = grouped[creator] || [];
-      const isCollapsed = !expandedGroups.includes(creator);
-      const unreadCount = items.filter(item => !readFeeds.includes(feedId(item))).length;
-      html += `<div class="feed-group">
-        <div class="feed-group-header ${isCollapsed ? 'collapsed' : ''}" data-group="${creator}" onclick="toggleGroup('${creator}')">
-          <span class="group-toggle">▼</span>
-          ${creatorProfiles[creator].avatar ? `<img class="group-avatar" src="${creatorProfiles[creator].avatar}" onerror="this.style.display='none'" />` : ''}
-          <span class="group-name">${creatorProfiles[creator].nickname}</span>
-          <span class="group-count">${unreadCount > 0 ? unreadCount + '件の新着' : '新着なし'}</span>
-          <span class="group-actions">
-            <button class="btn-sm" onclick="event.stopPropagation();markCreatorRead('${creator}')">全て既読</button>
-          </span>
-        </div>
-        <div class="feed-group-body ${isCollapsed ? 'collapsed' : ''}" data-group-body="${creator}" data-creator="${creator}">`;
-      if (items.length === 0) {
-        html += '<div class="empty">記事を取得できませんでした</div>';
-      } else {
-        items.forEach(item => {
-          const date = new Date(item.pubDate).toLocaleDateString('ja-JP');
-          const thumb = item.thumbnail || '';
-          const id = feedId(item);
-          const isRead = readFeeds.includes(id);
-          html += `
-            <div class="feed-card ${isRead ? 'read' : ''}" data-feed-id="${id}" ${isRead && hideRead ? 'style="display:none"' : ''}>
-              ${thumb ? `<img class="feed-thumb" src="${thumb}" onerror="this.style.display='none'" />` : '<div class="feed-thumb"></div>'}
-              <div class="feed-info">
-                <div class="title"><a href="${item.link}" target="_blank">${item.title}</a></div>
-                <div class="date">${date}</div>
-              </div>
-              <button class="read-btn ${isRead ? 'is-read' : ''}" onclick="markFeedRead('${id.replace(/'/g, "\\'")}')">${isRead ? '既読' : '既読にする'}</button>
-            </div>`;
-        });
-      }
-      html += '</div></div>';
-    });
-    list.innerHTML = html;
+    if (feedCache && Array.isArray(feedCache.items) && feedCache.items.length > 0) {
+      // 取得失敗時は前回のキャッシュ表示を維持する
+      status.className = 'status error';
+      status.textContent = '更新に失敗しました（前回取得した一覧を表示中）';
+    } else {
+      list.innerHTML = '<div class="empty">記事が取得できませんでした</div>';
+      status.className = 'status';
+      status.textContent = '0件の記事を取得しました';
+    }
+    btn.disabled = false;
+    return;
   }
+
+  feedCache = { items: allItems, profiles: creatorProfiles };
+  localStorage.setItem('nc_feed_cache', JSON.stringify(feedCache));
+  renderFeedList(allItems, creatorProfiles);
 
   status.className = 'status';
   status.textContent = `${allItems.length}件の記事を取得しました`;
   btn.disabled = false;
 }
 
+function renderFeedList(allItems, creatorProfiles) {
+  const list = document.getElementById('feed-list');
+  const grouped = {};
+  creators.forEach(c => { grouped[c] = []; });
+  allItems.forEach(item => {
+    if (!grouped[item.creatorName]) grouped[item.creatorName] = [];
+    grouped[item.creatorName].push(item);
+  });
+  Object.keys(grouped).forEach(creator => {
+    grouped[creator].sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+  });
+
+  document.getElementById('feed-toolbar').style.display = 'flex';
+  document.getElementById('hide-read-toggle').checked = hideRead;
+
+  let html = '';
+  creators.forEach(creator => {
+    const items = grouped[creator] || [];
+    const prof = creatorProfiles[creator] || { nickname: creator, avatar: '' };
+    const isCollapsed = !expandedGroups.includes(creator);
+    const unreadCount = items.filter(item => !readFeeds.includes(feedId(item))).length;
+    html += `<div class="feed-group">
+      <div class="feed-group-header ${isCollapsed ? 'collapsed' : ''}" data-group="${creator}" onclick="toggleGroup('${creator}')">
+        <span class="group-toggle">▼</span>
+        ${prof.avatar ? `<img class="group-avatar" src="${prof.avatar}" onerror="this.style.display='none'" />` : ''}
+        <span class="group-name">${prof.nickname}</span>
+        <span class="group-count">${unreadCount > 0 ? unreadCount + '件の新着' : '新着なし'}</span>
+        <span class="group-actions">
+          <button class="btn-sm" onclick="event.stopPropagation();markCreatorRead('${creator}')">全て既読</button>
+        </span>
+      </div>
+      <div class="feed-group-body ${isCollapsed ? 'collapsed' : ''}" data-group-body="${creator}" data-creator="${creator}">`;
+    if (items.length === 0) {
+      html += '<div class="empty">記事を取得できませんでした</div>';
+    } else {
+      items.forEach(item => {
+        const date = new Date(item.pubDate).toLocaleDateString('ja-JP');
+        const thumb = item.thumbnail || '';
+        const id = feedId(item);
+        const isRead = readFeeds.includes(id);
+        html += `
+          <div class="feed-card ${isRead ? 'read' : ''}" data-feed-id="${id}" ${isRead && hideRead ? 'style="display:none"' : ''}>
+            ${thumb ? `<img class="feed-thumb" src="${thumb}" onerror="this.style.display='none'" />` : '<div class="feed-thumb"></div>'}
+            <div class="feed-info">
+              <div class="title"><a href="${item.link}" target="_blank">${item.title}</a></div>
+              <div class="date">${date}</div>
+            </div>
+            <button class="read-btn ${isRead ? 'is-read' : ''}" onclick="markFeedRead('${id.replace(/'/g, "\\'")}')">${isRead ? '既読' : '既読にする'}</button>
+          </div>`;
+      });
+    }
+    html += '</div></div>';
+  });
+  list.innerHTML = html;
+}
+
 renderCreatorTags();
+renderRegisteredTags();
+// 前回取得したフィードを折りたたみ状態で即表示し、裏で自動更新
+if (feedCache && Array.isArray(feedCache.items) && feedCache.items.length > 0) {
+  renderFeedList(feedCache.items, feedCache.profiles || {});
+  document.getElementById('feed-status').textContent = '前回取得した記事一覧を表示中';
+}
+if (creators.length > 0) fetchFeeds();
 </script>
 </body>
 </html>
