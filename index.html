@@ -85,6 +85,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .creator-tag button:hover { color: #e53935; }
 .creator-tag .drag-handle { cursor: grab; color: #bbb; font-size: 14px; padding: 0 2px; touch-action: none; user-select: none; }
 .creator-tag.dragging { opacity: 0.5; }
+.auth-area { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.user-chip { display: flex; align-items: center; gap: 6px; font-size: 13px; color: #555; }
+.user-chip img { width: 28px; height: 28px; border-radius: 50%; object-fit: cover; }
+.sync-note { font-size: 11px; color: #aaa; }
 .empty { text-align: center; padding: 2rem; color: #aaa; font-size: 14px; }
 </style>
 </head>
@@ -95,6 +99,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <svg viewBox="0 0 24 24"><path d="M18 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zM6 4h5v8l-2.5-1.5L6 12V4z"/><path d="M14.5 9.5l1.5-1.5 1.5 1.5M16 8v5" fill="none" stroke="white" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>
     <h1>のーとびより β</h1>
+    <div class="auth-area">
+      <button class="btn" id="login-btn" onclick="fbLogin()">Googleでログイン</button>
+      <div class="user-chip" id="user-chip" style="display:none">
+        <img id="user-avatar" alt="" />
+        <span id="user-note-id"></span>
+        <button class="btn-sm" onclick="changeNoteId()">noteID変更</button>
+        <button class="btn-sm" onclick="fbLogout()">ログアウト</button>
+      </div>
+    </div>
   </div>
 
   <div class="tabs">
@@ -220,12 +233,13 @@ function switchTab(tab, el) {
   document.getElementById(tab).classList.add('active');
 }
 
-function saveChecked() { localStorage.setItem('nc_checked', JSON.stringify(checkedArticles)); }
-function saveCreators() { localStorage.setItem('nc_creators', JSON.stringify(creators)); }
-function saveReadFeeds() { localStorage.setItem('nc_read_feeds', JSON.stringify(readFeeds)); }
-function saveExpanded() { localStorage.setItem('nc_expanded_groups', JSON.stringify(expandedGroups)); }
+function syncIfLoggedIn() { if (window.scheduleSync) window.scheduleSync(); }
+function saveChecked() { localStorage.setItem('nc_checked', JSON.stringify(checkedArticles)); syncIfLoggedIn(); }
+function saveCreators() { localStorage.setItem('nc_creators', JSON.stringify(creators)); syncIfLoggedIn(); }
+function saveReadFeeds() { localStorage.setItem('nc_read_feeds', JSON.stringify(readFeeds)); syncIfLoggedIn(); }
+function saveExpanded() { localStorage.setItem('nc_expanded_groups', JSON.stringify(expandedGroups)); syncIfLoggedIn(); }
 
-function saveRegistered() { localStorage.setItem('nc_registered', JSON.stringify(registeredArticles)); }
+function saveRegistered() { localStorage.setItem('nc_registered', JSON.stringify(registeredArticles)); syncIfLoggedIn(); }
 function esc(s) { return String(s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])); }
 
 function feedId(item) { return item.link || item.guid || (item.creatorName + ':' + item.title); }
@@ -352,6 +366,7 @@ function markAllRead() {
 function toggleHideRead() {
   hideRead = document.getElementById('hide-read-toggle').checked;
   localStorage.setItem('nc_hide_read', JSON.stringify(hideRead));
+  syncIfLoggedIn();
   document.querySelectorAll('.feed-card.read').forEach(card => {
     card.style.display = hideRead ? 'none' : '';
   });
@@ -585,6 +600,7 @@ function markReplied(btn) {
     if (key && !repliedComments.includes(key)) {
       repliedComments.push(key);
       localStorage.setItem('nc_replied', JSON.stringify(repliedComments));
+      syncIfLoggedIn();
     }
     card.style.display = 'none';
     const counter = document.getElementById('m-articles');
@@ -693,7 +709,7 @@ async function fetchFeeds() {
           link: `https://note.com/${creator}/n/${n.key}`,
           pubDate: n.publishAt || n.published_at || n.createdAt || n.created_at || '',
           thumbnail: n.eyecatch || '',
-          description: n.body || '',
+          description: '',
           creatorName: creator
         });
       });
@@ -790,12 +806,167 @@ function renderFeedList(allItems, creatorProfiles) {
 
 renderCreatorTags();
 renderRegisteredTags();
+// 保存済みのnoteIDを自動入力
+const savedNoteId = localStorage.getItem('nc_note_id') || '';
+if (savedNoteId) document.getElementById('urlname-input').value = savedNoteId;
 // 前回取得したフィードを折りたたみ状態で即表示し、裏で自動更新
 if (feedCache && Array.isArray(feedCache.items) && feedCache.items.length > 0) {
   renderFeedList(feedCache.items, feedCache.profiles || {});
   document.getElementById('feed-status').textContent = '前回取得した記事一覧を表示中';
 }
 if (creators.length > 0) fetchFeeds();
+</script>
+<script type="module">
+import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js';
+import { getAuth, GoogleAuthProvider, signInWithPopup, signInWithRedirect, getRedirectResult, onAuthStateChanged, signOut } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js';
+import { getFirestore, doc, getDoc, setDoc } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js';
+
+const firebaseConfig = {
+  apiKey: "AIzaSyD1DdFL7S5MMRveirqD1L8vAYmPxAYmwhg",
+  authDomain: "note-biyori.firebaseapp.com",
+  projectId: "note-biyori",
+  storageBucket: "note-biyori.firebasestorage.app",
+  messagingSenderId: "988432612585",
+  appId: "1:988432612585:web:28ab8a1c916094e9534478",
+  measurementId: "G-N30X0L9Z0V"
+};
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+let currentUser = null;
+let syncTimer = null;
+let syncReady = false; // ログイン直後のマージが終わるまでpushしない
+
+function collectState() {
+  return {
+    noteId: localStorage.getItem('nc_note_id') || '',
+    checkedArticles, repliedComments, creators, readFeeds,
+    registeredArticles, expandedGroups, hideRead,
+    updatedAt: Date.now()
+  };
+}
+
+async function pushState() {
+  if (!currentUser || !syncReady) return;
+  try {
+    await setDoc(doc(db, 'users', currentUser.uid), collectState());
+  } catch(e) {
+    console.warn('[sync] 保存に失敗:', e.message);
+  }
+}
+
+window.scheduleSync = () => {
+  if (!currentUser || !syncReady) return;
+  clearTimeout(syncTimer);
+  syncTimer = setTimeout(pushState, 1500);
+};
+
+window.fbLogin = async () => {
+  const provider = new GoogleAuthProvider();
+  try {
+    await signInWithPopup(auth, provider);
+  } catch(e) {
+    if (e.code === 'auth/popup-blocked' || e.code === 'auth/popup-closed-by-user' || e.code === 'auth/cancelled-popup-request') {
+      try { await signInWithRedirect(auth, provider); } catch(e2) { alert('ログインに失敗しました: ' + e2.message); }
+    } else {
+      alert('ログインに失敗しました: ' + e.message);
+    }
+  }
+};
+
+window.fbLogout = async () => {
+  clearTimeout(syncTimer);
+  await pushState(); // 未送信の変更を保存してからログアウト
+  syncReady = false;
+  await signOut(auth);
+};
+
+window.changeNoteId = () => {
+  const cur = localStorage.getItem('nc_note_id') || '';
+  const v = prompt('note ID（例: kyownruby）', cur);
+  if (v === null) return;
+  const id = v.trim().replace('@', '');
+  localStorage.setItem('nc_note_id', id);
+  document.getElementById('urlname-input').value = id;
+  document.getElementById('user-note-id').textContent = id ? '@' + id : '';
+  window.scheduleSync();
+};
+
+function updateAuthUI(user) {
+  document.getElementById('login-btn').style.display = user ? 'none' : '';
+  document.getElementById('user-chip').style.display = user ? 'flex' : 'none';
+  if (user) {
+    const avatar = document.getElementById('user-avatar');
+    avatar.src = user.photoURL || '';
+    avatar.style.display = user.photoURL ? '' : 'none';
+    const noteId = localStorage.getItem('nc_note_id') || '';
+    document.getElementById('user-note-id').textContent = noteId ? '@' + noteId : (user.displayName || '');
+  }
+}
+
+const union = (a, b) => [...new Set([...(a || []), ...(b || [])])];
+
+async function applyRemoteState(user) {
+  const snap = await getDoc(doc(db, 'users', user.uid));
+  const remote = snap.exists() ? snap.data() : null;
+  if (remote) {
+    // 既読・返信済み・確認済みは端末間の和集合（どちらかで既読なら既読）
+    checkedArticles = union(checkedArticles, remote.checkedArticles);
+    repliedComments = union(repliedComments, remote.repliedComments);
+    readFeeds = union(readFeeds, remote.readFeeds);
+    // アカウント一覧はリモートの並び順を優先し、ローカルだけにあるものを後ろに足す
+    const rc = remote.creators || [];
+    creators = [...rc, ...creators.filter(c => !rc.includes(c))];
+    const rr = remote.registeredArticles || [];
+    const rrKeys = new Set(rr.map(r => r.key));
+    registeredArticles = [...rr, ...registeredArticles.filter(r => !rrKeys.has(r.key))];
+    if (Array.isArray(remote.expandedGroups)) expandedGroups = union(expandedGroups, remote.expandedGroups);
+    if (typeof remote.hideRead === 'boolean') hideRead = remote.hideRead;
+  }
+
+  // noteID：リモート優先 → ローカル → 初回は入力してもらう
+  let noteId = (remote && remote.noteId) || localStorage.getItem('nc_note_id') || '';
+  if (!noteId) {
+    noteId = (prompt('あなたのnote IDを登録してね（例: kyownruby）\nコメント管理のnoteID欄に自動入力されるようになるよ') || '').trim().replace('@', '');
+  }
+  if (noteId) {
+    localStorage.setItem('nc_note_id', noteId);
+    document.getElementById('urlname-input').value = noteId;
+  }
+
+  // マージ結果をlocalStorageへ反映（save系はscheduleSyncを呼ぶがsyncReady前なので送信されない）
+  localStorage.setItem('nc_checked', JSON.stringify(checkedArticles));
+  localStorage.setItem('nc_replied', JSON.stringify(repliedComments));
+  localStorage.setItem('nc_read_feeds', JSON.stringify(readFeeds));
+  localStorage.setItem('nc_creators', JSON.stringify(creators));
+  localStorage.setItem('nc_registered', JSON.stringify(registeredArticles));
+  localStorage.setItem('nc_expanded_groups', JSON.stringify(expandedGroups));
+  localStorage.setItem('nc_hide_read', JSON.stringify(hideRead));
+
+  renderCreatorTags();
+  renderRegisteredTags();
+  if (feedCache && Array.isArray(feedCache.items) && feedCache.items.length > 0) {
+    renderFeedList(feedCache.items, feedCache.profiles || {});
+  }
+}
+
+getRedirectResult(auth).catch(() => {});
+onAuthStateChanged(auth, async user => {
+  currentUser = user;
+  updateAuthUI(user);
+  if (!user) { syncReady = false; return; }
+  try {
+    await applyRemoteState(user);
+    syncReady = true;
+    updateAuthUI(user);
+    await pushState(); // マージ結果をクラウドへ保存
+  } catch(e) {
+    console.warn('[sync] 読み込みに失敗:', e);
+    alert('データ同期の読み込みに失敗しました。Firestoreのセキュリティルールを確認してください');
+  }
+});
 </script>
 </body>
 </html>
