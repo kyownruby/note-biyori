@@ -286,7 +286,7 @@ function updateNoteIdUI() {
     disp.style.display = 'none';
   }
   const chip = document.getElementById('user-note-id');
-  if (chip) chip.textContent = id ? myDisplayName(id) : '';
+  if (chip) chip.textContent = id ? '@' + id : '';
 }
 
 // note APIから自分のプロフィールを取得してキャッシュ（失敗時は@IDのまま）
@@ -1005,7 +1005,7 @@ function updateAuthUI(user) {
     avatar.src = user.photoURL || '';
     avatar.style.display = user.photoURL ? '' : 'none';
     const noteId = localStorage.getItem('nc_note_id') || '';
-    document.getElementById('user-note-id').textContent = noteId ? myDisplayName(noteId) : (user.displayName || '');
+    document.getElementById('user-note-id').textContent = noteId ? '@' + noteId : (user.displayName || '');
   } else {
     document.getElementById('login-status').textContent = '';
     // ゲスト利用中はログイン画面を再表示しない
