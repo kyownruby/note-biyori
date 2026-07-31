@@ -21,6 +21,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .input-row { display: flex; gap: 8px; margin-bottom: 1.5rem; }
 .input-row input { flex: 1; padding: 8px 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; background: #fff; }
 .input-row input:focus { outline: none; border-color: #F2A0B5; }
+.noteid-display { flex: 1; display: flex; align-items: center; padding: 8px 12px; font-size: 14px; font-weight: 600; color: #333; cursor: pointer; border-radius: 8px; }
+.noteid-display:hover { background: #efefed; }
 .btn { padding: 8px 16px; border: 1px solid #ddd; border-radius: 8px; font-size: 14px; cursor: pointer; background: #fff; white-space: nowrap; }
 .btn:hover { background: #f5f5f5; }
 .btn.primary { background: #F2A0B5; border-color: #F2A0B5; color: white; }
@@ -143,6 +145,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   <div id="comments" class="section active">
     <div class="input-row">
       <input type="text" id="urlname-input" placeholder="note ID（例: kyownruby）" onkeydown="if(event.key==='Enter')fetchArticles()" />
+      <span id="noteid-display" class="noteid-display" style="display:none" onclick="changeNoteId()" title="クリックでnoteIDを変更"></span>
       <div style="display:flex;align-items:center;gap:8px;flex:none">
         <label style="font-size:13px;color:#ccc;display:flex;align-items:center;gap:3px;cursor:pointer">
           <input type="radio" name="fetch-mode" value="count" checked onchange="document.getElementById('article-count').disabled=false"> 件数指定
@@ -255,6 +258,34 @@ let guestMode = false;
 function enterGuestMode() {
   guestMode = true;
   document.getElementById('login-screen').classList.add('hidden');
+}
+
+// noteIDが登録済みなら入力欄を隠して表示に置き換える
+function updateNoteIdUI() {
+  const id = localStorage.getItem('nc_note_id') || '';
+  const input = document.getElementById('urlname-input');
+  const disp = document.getElementById('noteid-display');
+  if (id) {
+    input.value = id;
+    input.style.display = 'none';
+    disp.textContent = '@' + id;
+    disp.style.display = 'flex';
+  } else {
+    input.style.display = '';
+    disp.style.display = 'none';
+  }
+}
+
+function changeNoteId() {
+  const cur = localStorage.getItem('nc_note_id') || '';
+  const v = prompt('note ID（例: kyownruby）', cur);
+  if (v === null) return;
+  const id = v.trim().replace('@', '');
+  localStorage.setItem('nc_note_id', id);
+  const chip = document.getElementById('user-note-id');
+  if (chip) chip.textContent = id ? '@' + id : '';
+  updateNoteIdUI();
+  syncIfLoggedIn();
 }
 
 function switchTab(tab, el) {
@@ -488,7 +519,8 @@ function cancelFetch() {
   fetchCancelled = true;
 }
 async function fetchArticles() {
-  const urlname = document.getElementById('urlname-input').value.trim();
+  // 登録済みnoteIDを優先し、未登録なら入力欄から取得
+  const urlname = (localStorage.getItem('nc_note_id') || document.getElementById('urlname-input').value).trim();
   if (!urlname && registeredArticles.length === 0) return;
   const status = document.getElementById('comment-status');
   const list = document.getElementById('comment-list');
@@ -843,9 +875,8 @@ function renderFeedList(allItems, creatorProfiles) {
 
 renderCreatorTags();
 renderRegisteredTags();
-// 保存済みのnoteIDを自動入力
-const savedNoteId = localStorage.getItem('nc_note_id') || '';
-if (savedNoteId) document.getElementById('urlname-input').value = savedNoteId;
+// noteID登録済みなら入力欄を隠して表示に切り替え
+updateNoteIdUI();
 // 前回取得したフィードを折りたたみ状態で即表示し、裏で自動更新
 if (feedCache && Array.isArray(feedCache.items) && feedCache.items.length > 0) {
   renderFeedList(feedCache.items, feedCache.profiles || {});
@@ -932,17 +963,6 @@ window.fbLogout = async () => {
   await signOut(auth);
 };
 
-window.changeNoteId = () => {
-  const cur = localStorage.getItem('nc_note_id') || '';
-  const v = prompt('note ID（例: kyownruby）', cur);
-  if (v === null) return;
-  const id = v.trim().replace('@', '');
-  localStorage.setItem('nc_note_id', id);
-  document.getElementById('urlname-input').value = id;
-  document.getElementById('user-note-id').textContent = id ? '@' + id : '';
-  window.scheduleSync();
-};
-
 function updateAuthUI(user) {
   const loginScreen = document.getElementById('login-screen');
   document.getElementById('user-chip').style.display = user ? 'flex' : 'none';
@@ -987,8 +1007,8 @@ async function applyRemoteState(user) {
   }
   if (noteId) {
     localStorage.setItem('nc_note_id', noteId);
-    document.getElementById('urlname-input').value = noteId;
   }
+  updateNoteIdUI();
 
   // マージ結果をlocalStorageへ反映（save系はscheduleSyncを呼ぶがsyncReady前なので送信されない）
   localStorage.setItem('nc_checked', JSON.stringify(checkedArticles));
