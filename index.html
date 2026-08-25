@@ -192,11 +192,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 </div>
 
 <script>
+// corsproxy.ioは匿名利用が廃止（要APIキー）になったため除外し、cors.lolを追加
 const CORS_PROXIES = [
   url => 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(url),
-  url => 'https://corsproxy.io/?' + encodeURIComponent(url),
+  url => 'https://api.cors.lol/?url=' + encodeURIComponent(url),
   url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
 ];
+// プロキシごとの連続失敗数（多いものは後回しにする）と、負荷分散用のローテーション
+const proxyFailStreak = CORS_PROXIES.map(() => 0);
+let proxyRotation = 0;
 // フィード・コメント・プロフィール取得が同時に走るため、全体の同時リクエスト数を絞って
 // CORSプロキシのレート制限（codetabsは秒間5件程度）に当たりにくくする
 const FETCH_CONCURRENCY = 4;
@@ -228,24 +232,34 @@ async function fetchWithTimeout(url, ms) {
 async function fetchOnceWithCors(url) {
   const cacheBuster = (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
   const noCacheUrl = url + cacheBuster;
-  for (const proxy of CORS_PROXIES) {
+  // 健全なプロキシを優先しつつ、同等ならローテーションで負荷を分散する
+  const len = CORS_PROXIES.length;
+  const start = proxyRotation++ % len;
+  const order = CORS_PROXIES.map((_, i) => i).sort((a, b) =>
+    (proxyFailStreak[a] - proxyFailStreak[b]) ||
+    ((((a - start) % len) + len) % len) - ((((b - start) % len) + len) % len));
+  for (const idx of order) {
     try {
-      const res = await fetchWithTimeout(proxy(noCacheUrl), 10000);
+      const res = await fetchWithTimeout(CORS_PROXIES[idx](noCacheUrl), 10000);
       if (!res.ok) {
-        console.warn(`[note-mgr] Proxy returned ${res.status} for ${url}`);
+        console.warn(`[note-mgr] Proxy #${idx} returned ${res.status} for ${url}`);
+        proxyFailStreak[idx]++;
         continue;
       }
       const body = await res.text();
       if (!body || body.length === 0) {
-        console.warn(`[note-mgr] Proxy returned empty body for ${url}`);
+        console.warn(`[note-mgr] Proxy #${idx} returned empty body for ${url}`);
+        proxyFailStreak[idx]++;
         continue;
       }
+      proxyFailStreak[idx] = 0;
       return new Response(body, {
         status: res.status,
         headers: { 'content-type': res.headers.get('content-type') || 'text/plain' }
       });
     } catch(e) {
-      console.warn(`[note-mgr] Proxy failed for ${url}:`, e.message);
+      console.warn(`[note-mgr] Proxy #${idx} failed for ${url}:`, e.message);
+      proxyFailStreak[idx]++;
     }
   }
   // Direct fetch as last resort
