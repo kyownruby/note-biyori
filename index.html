@@ -197,7 +197,24 @@ const CORS_PROXIES = [
   url => 'https://corsproxy.io/?' + encodeURIComponent(url),
   url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
 ];
-async function fetchWithCors(url) {
+// フィード・コメント・プロフィール取得が同時に走るため、全体の同時リクエスト数を絞って
+// CORSプロキシのレート制限（codetabsは秒間5件程度）に当たりにくくする
+const FETCH_CONCURRENCY = 4;
+let activeFetchCount = 0;
+const fetchWaiters = [];
+function acquireFetchSlot() {
+  return new Promise(resolve => {
+    if (activeFetchCount < FETCH_CONCURRENCY) { activeFetchCount++; resolve(); }
+    else fetchWaiters.push(resolve);
+  });
+}
+function releaseFetchSlot() {
+  const next = fetchWaiters.shift();
+  if (next) next();
+  else activeFetchCount--;
+}
+
+async function fetchOnceWithCors(url) {
   const cacheBuster = (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
   const noCacheUrl = url + cacheBuster;
   for (const proxy of CORS_PROXIES) {
@@ -231,6 +248,21 @@ async function fetchWithCors(url) {
       headers: { 'content-type': res.headers.get('content-type') || 'text/plain' }
     });
   } catch(e) { return null; }
+}
+
+async function fetchWithCors(url) {
+  await acquireFetchSlot();
+  try {
+    // 全プロキシ失敗時は少し待ってもう1周（レート制限からの復帰用）
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise(r => setTimeout(r, 1000));
+      const res = await fetchOnceWithCors(url);
+      if (res) return res;
+    }
+    return null;
+  } finally {
+    releaseFetchSlot();
+  }
 }
 function parseRSS(xml) {
   const parser = new DOMParser();
@@ -609,7 +641,7 @@ async function fetchArticles() {
         if (fetchCancelled) throw new Error('取得を中止しました');
         const apiUrl = `https://note.com/api/v2/creators/${urlname}/contents?kind=note&page=${page}&per=${perPage}`;
         const res = await fetchWithCors(apiUrl);
-        if (!res || !res.ok) throw new Error('記事の取得に失敗しました。アカウント名を確認してください');
+        if (!res || !res.ok) throw new Error('記事の取得に失敗しました。時間をおいて「更新」を押すか、noteIDを確認してください');
         const data = await res.json();
         const notes = data.data?.contents || [];
         if (notes.length === 0) break;
