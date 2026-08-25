@@ -214,12 +214,23 @@ function releaseFetchSlot() {
   else activeFetchCount--;
 }
 
+// 応答しないプロキシで固まらないよう、各リクエストにタイムアウトを付ける
+async function fetchWithTimeout(url, ms) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchOnceWithCors(url) {
   const cacheBuster = (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
   const noCacheUrl = url + cacheBuster;
   for (const proxy of CORS_PROXIES) {
     try {
-      const res = await fetch(proxy(noCacheUrl), { cache: 'no-store' });
+      const res = await fetchWithTimeout(proxy(noCacheUrl), 10000);
       if (!res.ok) {
         console.warn(`[note-mgr] Proxy returned ${res.status} for ${url}`);
         continue;
@@ -239,7 +250,7 @@ async function fetchOnceWithCors(url) {
   }
   // Direct fetch as last resort
   try {
-    const res = await fetch(noCacheUrl, { cache: 'no-store' });
+    const res = await fetchWithTimeout(noCacheUrl, 10000);
     if (!res.ok) return null;
     const body = await res.text();
     if (!body) return null;
@@ -250,12 +261,24 @@ async function fetchOnceWithCors(url) {
   } catch(e) { return null; }
 }
 
+// プロキシのレート制限（秒間5件程度）を超えないよう、リクエスト開始間隔を全体で空ける
+const FETCH_SPACING_MS = 250;
+let nextFetchAt = 0;
+async function paceFetch() {
+  const now = Date.now();
+  const wait = Math.max(0, nextFetchAt - now);
+  nextFetchAt = Math.max(now, nextFetchAt) + FETCH_SPACING_MS;
+  if (wait > 0) await new Promise(r => setTimeout(r, wait));
+}
+
 async function fetchWithCors(url) {
   await acquireFetchSlot();
   try {
-    // 全プロキシ失敗時は少し待ってもう1周（レート制限からの復帰用）
-    for (let attempt = 0; attempt < 2; attempt++) {
-      if (attempt > 0) await new Promise(r => setTimeout(r, 1000));
+    // 全プロキシ失敗時は間隔を空けてリトライ（レート制限からの復帰用）
+    const backoffs = [0, 1000, 3000];
+    for (const backoff of backoffs) {
+      if (backoff > 0) await new Promise(r => setTimeout(r, backoff));
+      await paceFetch();
       const res = await fetchOnceWithCors(url);
       if (res) return res;
     }
@@ -970,9 +993,10 @@ if (feedCache && Array.isArray(feedCache.items) && feedCache.items.length > 0) {
   renderFeedList(feedCache.items, feedCache.profiles || {});
   document.getElementById('feed-status').textContent = '前回取得した記事一覧を表示中';
 }
-if (creators.length > 0) fetchFeeds();
 // コメントも読み込み時に自動取得（noteID未登録なら何もしない）
+// 最初に表示されるコメント管理タブを優先し、フィードは後から取得する
 fetchArticles();
+if (creators.length > 0) fetchFeeds();
 // ログイン機能（Firebase）が読み込めない場合の案内
 setTimeout(() => {
   if (!window.fbLogin) {
