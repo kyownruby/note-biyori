@@ -150,15 +150,15 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
       <span id="noteid-display" class="noteid-display" style="display:none" onclick="changeNoteId()" title="クリックでnoteIDを変更"></span>
       <div style="display:flex;align-items:center;gap:8px;flex:none">
         <label style="font-size:13px;color:#ccc;display:flex;align-items:center;gap:3px;cursor:pointer">
-          <input type="radio" name="fetch-mode" value="count" checked onchange="document.getElementById('article-count').disabled=false"> 件数指定
+          <input type="radio" name="fetch-mode" value="count" checked onchange="saveFetchSettings()"> 件数指定
         </label>
-        <input type="number" id="article-count" value="3" min="1" max="50" style="width:60px;flex:none;text-align:center" title="取得する記事数" onblur="if(this.value>50)this.value=50;if(this.value<1)this.value=1" />
+        <input type="number" id="article-count" value="3" min="1" max="50" style="width:60px;flex:none;text-align:center" title="取得する記事数" onblur="if(this.value>50)this.value=50;if(this.value<1)this.value=1;saveFetchSettings()" />
         <span style="font-size:13px;color:#888">件</span>
         <label style="font-size:13px;color:#ccc;display:flex;align-items:center;gap:3px;cursor:pointer">
-          <input type="radio" name="fetch-mode" value="all" onchange="document.getElementById('article-count').disabled=true"> 全件
+          <input type="radio" name="fetch-mode" value="all" onchange="saveFetchSettings()"> 全件
         </label>
       </div>
-      <button class="btn primary" onclick="fetchArticles()" id="fetch-btn">取得</button>
+      <button class="btn primary" onclick="fetchArticles()" id="fetch-btn">更新</button>
     </div>
     <p style="font-size:12px;color:#aaa;margin:-1rem 0 1rem 0;">件数指定: 最新の公開記事から指定件数を取得（最大50件） ／ 全件: 2025/9/8以降の全記事を取得</p>
     <div class="input-row">
@@ -303,6 +303,25 @@ async function loadMyProfile() {
     localStorage.setItem('nc_note_profile', JSON.stringify(myProfile));
     updateNoteIdUI();
   } catch(e) {}
+}
+
+// 取得設定（件数指定/全件・件数）を保存して端末間で同期する
+function saveFetchSettings() {
+  const mode = document.querySelector('input[name="fetch-mode"]:checked').value;
+  document.getElementById('article-count').disabled = (mode === 'all');
+  localStorage.setItem('nc_fetch_mode', mode);
+  localStorage.setItem('nc_fetch_count', document.getElementById('article-count').value);
+  syncIfLoggedIn();
+}
+
+function applyFetchSettings() {
+  const mode = localStorage.getItem('nc_fetch_mode') || 'count';
+  const count = Math.max(1, Math.min(50, parseInt(localStorage.getItem('nc_fetch_count')) || 3));
+  const radio = document.querySelector(`input[name="fetch-mode"][value="${mode}"]`);
+  if (radio) radio.checked = true;
+  const countEl = document.getElementById('article-count');
+  countEl.value = count;
+  countEl.disabled = (mode === 'all');
 }
 
 function changeNoteId() {
@@ -550,10 +569,12 @@ async function fetchAllArticlesViaAPI(urlname, statusEl) {
 function cancelFetch() {
   fetchCancelled = true;
 }
+let commentsFetchStarted = false;
 async function fetchArticles() {
   // 登録済みnoteIDを優先し、未登録なら入力欄から取得
   const urlname = (localStorage.getItem('nc_note_id') || document.getElementById('urlname-input').value).trim();
   if (!urlname && registeredArticles.length === 0) return;
+  commentsFetchStarted = true;
   const status = document.getElementById('comment-status');
   const list = document.getElementById('comment-list');
   const btn = document.getElementById('fetch-btn');
@@ -683,7 +704,7 @@ async function fetchArticles() {
     status.className = 'status' + (fetchCancelled ? '' : ' error');
     status.textContent = e.message;
   }
-  btn.textContent = '取得';
+  btn.textContent = '更新';
   btn.classList.remove('cancel');
   btn.onclick = function() { fetchArticles(); };
 }
@@ -910,12 +931,16 @@ renderRegisteredTags();
 // noteID登録済みなら入力欄を隠して表示に切り替え（表示名は取得でき次第反映）
 updateNoteIdUI();
 loadMyProfile();
+// 取得設定（件数指定/全件・件数）を復元
+applyFetchSettings();
 // 前回取得したフィードを折りたたみ状態で即表示し、裏で自動更新
 if (feedCache && Array.isArray(feedCache.items) && feedCache.items.length > 0) {
   renderFeedList(feedCache.items, feedCache.profiles || {});
   document.getElementById('feed-status').textContent = '前回取得した記事一覧を表示中';
 }
 if (creators.length > 0) fetchFeeds();
+// コメントも読み込み時に自動取得（noteID未登録なら何もしない）
+fetchArticles();
 // ログイン機能（Firebase）が読み込めない場合の案内
 setTimeout(() => {
   if (!window.fbLogin) {
@@ -950,6 +975,8 @@ let syncReady = false; // ログイン直後のマージが終わるまでpush�
 function collectState() {
   return {
     noteId: localStorage.getItem('nc_note_id') || '',
+    fetchMode: localStorage.getItem('nc_fetch_mode') || 'count',
+    fetchCount: Math.max(1, Math.min(50, parseInt(localStorage.getItem('nc_fetch_count')) || 3)),
     checkedArticles, repliedComments, creators, readFeeds,
     registeredArticles, expandedGroups, hideRead,
     updatedAt: Date.now()
@@ -1031,6 +1058,10 @@ async function applyRemoteState(user) {
     registeredArticles = [...rr, ...registeredArticles.filter(r => !rrKeys.has(r.key))];
     if (Array.isArray(remote.expandedGroups)) expandedGroups = union(expandedGroups, remote.expandedGroups);
     if (typeof remote.hideRead === 'boolean') hideRead = remote.hideRead;
+    // 取得設定（件数指定/全件・件数）はリモート優先
+    if (remote.fetchMode === 'count' || remote.fetchMode === 'all') localStorage.setItem('nc_fetch_mode', remote.fetchMode);
+    if (Number.isFinite(remote.fetchCount)) localStorage.setItem('nc_fetch_count', String(remote.fetchCount));
+    applyFetchSettings();
   }
 
   // noteID：リモート優先 → ローカル → 初回は入力してもらう
@@ -1071,6 +1102,8 @@ onAuthStateChanged(auth, async user => {
     syncReady = true;
     updateAuthUI(user);
     await pushState(); // マージ結果をクラウドへ保存
+    // 初回端末などで読み込み時に自動取得できていなければ、同期後に取得
+    if (!commentsFetchStarted) fetchArticles();
   } catch(e) {
     console.warn('[sync] 読み込みに失敗:', e);
     alert('データ同期の読み込みに失敗しました。Firestoreのセキュリティルールを確認してください');
