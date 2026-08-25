@@ -134,6 +134,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
         <img id="user-avatar" alt="" />
         <span id="user-note-id"></span>
         <button class="btn-sm" onclick="changeNoteId()">noteID変更</button>
+        <button class="btn-sm" onclick="changeCustomProxy()" title="取得に失敗し続ける場合の設定">通信設定</button>
         <button class="btn-sm" onclick="fbLogout()">ログアウト</button>
       </div>
     </div>
@@ -192,14 +193,29 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 </div>
 
 <script>
-// corsproxy.ioは匿名利用が廃止（要APIキー）になったため除外し、cors.lolを追加
+// 生存確認済みのプロキシを優先度順に並べる。設定した独自プロキシがあれば最優先で使う
+// （{url}を含む文字列。例: https://xxx.workers.dev/?url={url}）
+const customProxy = localStorage.getItem('nc_custom_proxy') || '';
 const CORS_PROXIES = [
+  ...(customProxy.includes('{url}')
+    ? [url => customProxy.replace('{url}', encodeURIComponent(url))] : []),
+  { fn: url => 'https://r.jina.ai/' + url, headers: { 'x-respond-with': 'text' } },
+  url => 'https://proxy.cors.sh/' + url,
   url => 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(url),
   url => 'https://api.cors.lol/?url=' + encodeURIComponent(url),
   url => 'https://api.allorigins.win/raw?url=' + encodeURIComponent(url),
-];
+].map(p => (typeof p === 'function' ? { fn: p, headers: undefined } : p));
 // プロキシごとの連続失敗数（多いものは後回しにする）と、負荷分散用のローテーション
-const proxyFailStreak = CORS_PROXIES.map(() => 0);
+// ネットワークでブロックされているプロキシを次回以降すぐ後回しにできるよう、24時間はlocalStorageに記憶する
+let proxyFailStreak;
+try {
+  const saved = JSON.parse(localStorage.getItem('nc_proxy_health') || 'null');
+  proxyFailStreak = (saved && Array.isArray(saved.fails) && saved.fails.length === CORS_PROXIES.length
+    && Date.now() - saved.ts < 24 * 60 * 60 * 1000) ? saved.fails.slice() : CORS_PROXIES.map(() => 0);
+} catch(e) { proxyFailStreak = CORS_PROXIES.map(() => 0); }
+function saveProxyHealth() {
+  try { localStorage.setItem('nc_proxy_health', JSON.stringify({ fails: proxyFailStreak, ts: Date.now() })); } catch(e) {}
+}
 let proxyRotation = 0;
 // フィード・コメント・プロフィール取得が同時に走るため、全体の同時リクエスト数を絞って
 // CORSプロキシのレート制限（codetabsは秒間5件程度）に当たりにくくする
@@ -219,11 +235,11 @@ function releaseFetchSlot() {
 }
 
 // 応答しないプロキシで固まらないよう、各リクエストにタイムアウトを付ける
-async function fetchWithTimeout(url, ms) {
+async function fetchWithTimeout(url, ms, headers) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), ms);
   try {
-    return await fetch(url, { cache: 'no-store', signal: ctrl.signal });
+    return await fetch(url, { cache: 'no-store', signal: ctrl.signal, headers });
   } finally {
     clearTimeout(timer);
   }
@@ -240,31 +256,38 @@ async function fetchOnceWithCors(url) {
     ((((a - start) % len) + len) % len) - ((((b - start) % len) + len) % len));
   for (const idx of order) {
     try {
-      const res = await fetchWithTimeout(CORS_PROXIES[idx](noCacheUrl), 10000);
+      const p = CORS_PROXIES[idx];
+      const res = await fetchWithTimeout(p.fn(noCacheUrl), 15000, p.headers);
       if (!res.ok) {
         console.warn(`[note-mgr] Proxy #${idx} returned ${res.status} for ${url}`);
-        proxyFailStreak[idx]++;
+        proxyFailStreak[idx]++; saveProxyHealth();
         continue;
       }
       const body = await res.text();
       if (!body || body.length === 0) {
         console.warn(`[note-mgr] Proxy #${idx} returned empty body for ${url}`);
-        proxyFailStreak[idx]++;
+        proxyFailStreak[idx]++; saveProxyHealth();
         continue;
       }
-      proxyFailStreak[idx] = 0;
+      // note APIのJSONを期待しているので、HTML（ブロックページ等）や整形済みテキストは失敗扱いにする
+      if (!body.trimStart().startsWith('{')) {
+        console.warn(`[note-mgr] Proxy #${idx} returned non-JSON for ${url}`);
+        proxyFailStreak[idx]++; saveProxyHealth();
+        continue;
+      }
+      if (proxyFailStreak[idx] !== 0) { proxyFailStreak[idx] = 0; saveProxyHealth(); }
       return new Response(body, {
         status: res.status,
         headers: { 'content-type': res.headers.get('content-type') || 'text/plain' }
       });
     } catch(e) {
       console.warn(`[note-mgr] Proxy #${idx} failed for ${url}:`, e.message);
-      proxyFailStreak[idx]++;
+      proxyFailStreak[idx]++; saveProxyHealth();
     }
   }
   // Direct fetch as last resort
   try {
-    const res = await fetchWithTimeout(noCacheUrl, 10000);
+    const res = await fetchWithTimeout(noCacheUrl, 15000);
     if (!res.ok) return null;
     const body = await res.text();
     if (!body) return null;
@@ -391,6 +414,24 @@ function applyFetchSettings() {
   const countEl = document.getElementById('article-count');
   countEl.value = count;
   countEl.disabled = (mode === 'all');
+}
+
+// ネットワークが公共のCORSプロキシをブロックしている場合に、自前のプロキシを指定できるようにする
+function changeCustomProxy() {
+  const cur = localStorage.getItem('nc_custom_proxy') || '';
+  const v = prompt(
+    '取得に失敗し続ける場合、自分専用の中継URLを設定できます。\n' +
+    '{url} を含む形式で入力してください。\n' +
+    '例: https://あなたの名前.workers.dev/?url={url}\n\n' +
+    '空欄にすると既定の設定に戻ります。', cur);
+  if (v === null) return;
+  const val = v.trim();
+  if (val && !val.includes('{url}')) { alert('{url} を含むURLを入力してください'); return; }
+  if (val) localStorage.setItem('nc_custom_proxy', val);
+  else localStorage.removeItem('nc_custom_proxy');
+  localStorage.removeItem('nc_proxy_health'); // 構成が変わるので健全性の記録をリセット
+  alert('設定を保存しました。ページを再読み込みします');
+  location.reload();
 }
 
 function changeNoteId() {
