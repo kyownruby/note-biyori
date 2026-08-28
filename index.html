@@ -228,7 +228,6 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
         <img id="user-avatar" alt="" />
         <span id="user-note-id"></span>
         <button class="btn-sm" onclick="changeNoteId()">noteID変更</button>
-        <button class="btn-sm" onclick="changeCustomProxy()" title="取得に失敗し続ける場合の設定">通信設定</button>
         <button class="btn-sm" onclick="fbLogout()">ログアウト</button>
       </div>
     </div>
@@ -287,12 +286,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 </div>
 
 <script>
-// 生存確認済みのプロキシを優先度順に並べる。設定した独自プロキシがあれば最優先で使う
-// （{url}を含む文字列。例: https://xxx.workers.dev/?url={url}）
-const customProxy = localStorage.getItem('nc_custom_proxy') || '';
+// 生存確認済みのプロキシを優先度順に並べる
 const CORS_PROXIES = [
-  ...(customProxy.includes('{url}')
-    ? [url => customProxy.replace('{url}', encodeURIComponent(url))] : []),
   { fn: url => 'https://r.jina.ai/' + url, headers: { 'x-respond-with': 'text' } },
   url => 'https://proxy.cors.sh/' + url,
   url => 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(url),
@@ -536,24 +531,6 @@ function applyFetchSettings() {
   const countEl = document.getElementById('article-count');
   countEl.value = count;
   countEl.disabled = (mode === 'all');
-}
-
-// ネットワークが公共のCORSプロキシをブロックしている場合に、自前のプロキシを指定できるようにする
-function changeCustomProxy() {
-  const cur = localStorage.getItem('nc_custom_proxy') || '';
-  const v = prompt(
-    '取得に失敗し続ける場合、自分専用の中継URLを設定できます。\n' +
-    '{url} を含む形式で入力してください。\n' +
-    '例: https://あなたの名前.workers.dev/?url={url}\n\n' +
-    '空欄にすると既定の設定に戻ります。', cur);
-  if (v === null) return;
-  const val = v.trim();
-  if (val && !val.includes('{url}')) { alert('{url} を含むURLを入力してください'); return; }
-  if (val) localStorage.setItem('nc_custom_proxy', val);
-  else localStorage.removeItem('nc_custom_proxy');
-  localStorage.removeItem('nc_proxy_health'); // 構成が変わるので健全性の記録をリセット
-  alert('設定を保存しました。ページを再読み込みします');
-  location.reload();
 }
 
 function changeNoteId() {
@@ -1047,36 +1024,60 @@ async function fetchFeeds() {
   status.className = 'status loading';
   status.textContent = 'フィードを取得中...';
 
-  let allItems = [];
+  const allItems = [];
   const creatorProfiles = {};
-  for (const creator of creators) {
-    try {
-      const apiUrl = `https://note.com/api/v2/creators/${creator}/contents?kind=note&page=1&per=20`;
-      const res = await fetchWithCors(apiUrl);
-      if (!res || !res.ok) throw new Error('記事の取得に失敗しました');
-      const data = await res.json();
-      const notes = data.data?.contents || [];
-      notes.forEach(n => {
-        allItems.push({
-          title: n.name || n.title || '',
-          link: `https://note.com/${creator}/n/${n.key}`,
-          pubDate: n.publishAt || n.published_at || n.createdAt || n.created_at || '',
-          thumbnail: n.eyecatch || '',
-          description: '',
-          creatorName: creator
-        });
-      });
-    } catch(e) {}
-    try {
-      const profileRes = await fetchWithCors(`https://note.com/api/v2/creators/${creator}`);
-      if (profileRes && profileRes.ok) {
-        const profileData = await profileRes.json();
-        const u = profileData.data;
-        creatorProfiles[creator] = { nickname: u.nickname || u.name || creator, avatar: u.profileImageUrl || '' };
-      }
-    } catch(e) {}
-    if (!creatorProfiles[creator]) creatorProfiles[creator] = { nickname: creator, avatar: '' };
+
+  // アカウントごとの取得を並列化（実際の同時接続数と間隔は fetchWithCors 側で制御）
+  const FEED_CONCURRENCY = 4;
+  const results = new Array(creators.length);
+  let nextCreator = 0;
+  let doneCreators = 0;
+  async function feedWorker() {
+    while (true) {
+      const idx = nextCreator++;
+      if (idx >= creators.length) return;
+      const creator = creators[idx];
+      // 記事一覧とプロフィールも並列に取得する
+      const [contentsRes, profileRes] = await Promise.all([
+        fetchWithCors(`https://note.com/api/v2/creators/${creator}/contents?kind=note&page=1&per=20`).catch(() => null),
+        fetchWithCors(`https://note.com/api/v2/creators/${creator}`).catch(() => null)
+      ]);
+      const items = [];
+      try {
+        if (contentsRes && contentsRes.ok) {
+          const notes = (await contentsRes.json()).data?.contents || [];
+          notes.forEach(n => {
+            items.push({
+              title: n.name || n.title || '',
+              link: `https://note.com/${creator}/n/${n.key}`,
+              pubDate: n.publishAt || n.published_at || n.createdAt || n.created_at || '',
+              thumbnail: n.eyecatch || '',
+              description: '',
+              creatorName: creator
+            });
+          });
+        }
+      } catch(e) {}
+      let profile = null;
+      try {
+        if (profileRes && profileRes.ok) {
+          const u = (await profileRes.json()).data;
+          if (u) profile = { nickname: u.nickname || u.name || creator, avatar: u.profileImageUrl || '' };
+        }
+      } catch(e) {}
+      results[idx] = { creator, items, profile };
+      doneCreators++;
+      status.textContent = `フィードを取得中...（${doneCreators}/${creators.length}）`;
+    }
   }
+  await Promise.all(Array.from({ length: Math.min(FEED_CONCURRENCY, creators.length) }, feedWorker));
+
+  results.forEach(r => {
+    if (!r) return;
+    allItems.push(...r.items);
+    creatorProfiles[r.creator] = r.profile || { nickname: r.creator, avatar: '' };
+  });
+  creators.forEach(c => { if (!creatorProfiles[c]) creatorProfiles[c] = { nickname: c, avatar: '' }; });
 
   if (allItems.length === 0) {
     if (feedCache && Array.isArray(feedCache.items) && feedCache.items.length > 0) {
