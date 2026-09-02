@@ -103,8 +103,8 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .input-row { display: flex; gap: 8px; margin-bottom: 1.5rem; }
 .input-row input { flex: 1; padding: 8px 12px; border: 1px solid var(--border-mid); border-radius: 8px; font-size: 14px; background: var(--surface); color: var(--text); }
 .input-row input:focus { outline: none; border-color: var(--accent); }
-.noteid-display { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 14px; font-weight: 600; color: var(--text); cursor: pointer; border-radius: 8px; min-width: 0; }
-.noteid-display:hover { background: var(--hover); }
+.noteid-display { flex: 1; display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 14px; font-weight: 600; color: var(--text); cursor: pointer; border-radius: 8px; min-width: 0; text-decoration: none; }
+.noteid-display:hover { background: var(--hover); color: var(--accent); }
 .noteid-display span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .noteid-avatar { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
 .fetch-mode-label { font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 3px; cursor: pointer; }
@@ -244,7 +244,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   <div id="comments" class="section active">
     <div class="input-row">
       <input type="text" id="urlname-input" placeholder="note ID（例: kyownruby）" onkeydown="if(event.key==='Enter')fetchArticles()" />
-      <span id="noteid-display" class="noteid-display" style="display:none" onclick="changeNoteId()" title="クリックでnoteIDを変更"></span>
+      <a id="noteid-display" class="noteid-display" style="display:none" target="_blank" rel="noopener" title="クリエイターページを開く"></a>
       <div style="display:flex;align-items:center;gap:8px;flex:none">
         <label class="fetch-mode-label">
           <input type="radio" name="fetch-mode" value="count" checked onchange="saveFetchSettings()"> 件数指定
@@ -464,6 +464,7 @@ function updateNoteIdUI() {
     const avatar = (myProfile && myProfile.urlname === id && myProfile.avatar) ? myProfile.avatar : '';
     disp.innerHTML = (avatar ? `<img class="noteid-avatar" src="${avatar}" onerror="this.style.display='none'" />` : '')
       + `<span>${esc(myDisplayName(id))}</span>`;
+    disp.href = 'https://note.com/' + encodeURIComponent(id);
     disp.style.display = 'flex';
   } else {
     input.style.display = '';
