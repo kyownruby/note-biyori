@@ -289,8 +289,11 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 </div>
 
 <script>
-// 生存確認済みのプロキシを優先度順に並べる
+// 自前のCloudflare Worker（worker/ を参照）のURL。空文字のあいだは使わない
+const NOTEBIYORI_PROXY_URL = '';
+// 生存確認済みのプロキシを優先度順に並べる（自前Workerが最優先、公開プロキシは予備）
 const CORS_PROXIES = [
+  ...(NOTEBIYORI_PROXY_URL ? [{ fn: url => NOTEBIYORI_PROXY_URL + '/?url=' + encodeURIComponent(url), headers: undefined, own: true }] : []),
   { fn: url => 'https://r.jina.ai/' + url, headers: { 'x-respond-with': 'text' } },
   url => 'https://proxy.cors.sh/' + url,
   url => 'https://api.codetabs.com/v1/proxy/?quest=' + encodeURIComponent(url),
@@ -340,11 +343,12 @@ async function fetchWithTimeout(url, ms, headers) {
 async function fetchOnceWithCors(url) {
   const cacheBuster = (url.includes('?') ? '&' : '?') + '_t=' + Date.now();
   const noCacheUrl = url + cacheBuster;
-  // 健全なプロキシを優先しつつ、同等ならローテーションで負荷を分散する
+  // 健全なプロキシを優先しつつ、同等なら自前Workerを先に、公開プロキシ同士はローテーションで負荷を分散する
   const len = CORS_PROXIES.length;
   const start = proxyRotation++ % len;
   const order = CORS_PROXIES.map((_, i) => i).sort((a, b) =>
     (proxyFailStreak[a] - proxyFailStreak[b]) ||
+    ((CORS_PROXIES[b].own ? 1 : 0) - (CORS_PROXIES[a].own ? 1 : 0)) ||
     ((((a - start) % len) + len) % len) - ((((b - start) % len) + len) % len));
   for (const idx of order) {
     try {
