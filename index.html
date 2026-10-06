@@ -109,6 +109,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 .noteid-avatar { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; flex-shrink: 0; }
 .fetch-mode-label { font-size: 13px; color: var(--text-muted); display: flex; align-items: center; gap: 3px; cursor: pointer; }
 .hint { font-size: 12px; color: var(--text-dim); margin: -1rem 0 1rem 0; }
+.hint-warn { color: var(--warn); }
+.fetch-period-select { padding: 6px 8px; border: 1px solid var(--border-mid); border-radius: 8px; font-size: 13px; background: var(--surface); color: var(--text); }
+/* 取得モードが3つになって横幅が足りない狭い画面では、取得設定を折り返す */
+@media (max-width: 600px) { .fetch-row { flex-wrap: wrap; } .fetch-row .noteid-display, .fetch-row #urlname-input { flex-basis: 100%; } .fetch-row > div { flex: 1 1 auto !important; flex-wrap: wrap; } }
 .btn { padding: 8px 16px; border: 1px solid var(--border-mid); border-radius: 8px; font-size: 14px; cursor: pointer; background: var(--surface); color: var(--text); white-space: nowrap; }
 .btn:hover { background: var(--hover); }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-on); }
@@ -242,7 +246,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
   </div>
 
   <div id="comments" class="section active">
-    <div class="input-row">
+    <div class="input-row fetch-row">
       <input type="text" id="urlname-input" placeholder="note ID（例: kyownruby）" onkeydown="if(event.key==='Enter')fetchArticles()" />
       <a id="noteid-display" class="noteid-display" style="display:none" target="_blank" rel="noopener" title="クリエイターページを開く"></a>
       <div style="display:flex;align-items:center;gap:8px;flex:none">
@@ -252,12 +256,22 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
         <input type="number" id="article-count" value="3" min="1" max="50" style="width:60px;flex:none;text-align:center" title="取得する記事数" onblur="if(this.value>50)this.value=50;if(this.value<1)this.value=1;saveFetchSettings()" />
         <span class="fetch-mode-label">件</span>
         <label class="fetch-mode-label">
-          <input type="radio" name="fetch-mode" value="all" onchange="saveFetchSettings()"> 全件
+          <input type="radio" name="fetch-mode" value="period" onchange="saveFetchSettings()"> 期間指定
+        </label>
+        <select id="fetch-period" class="fetch-period-select" title="取得する期間" onchange="saveFetchSettings()">
+          <option value="1w">1週間</option>
+          <option value="1m" selected>1か月</option>
+          <option value="3m">3か月</option>
+          <option value="6m">半年</option>
+          <option value="1y">1年</option>
+        </select>
+        <label class="fetch-mode-label">
+          <input type="radio" name="fetch-mode" value="all" onchange="saveFetchSettings()"> 全期間
         </label>
       </div>
       <button class="btn primary" onclick="fetchArticles()" id="fetch-btn">更新</button>
     </div>
-    <p class="hint">件数指定: 最新の公開記事から指定件数を取得（最大50件） ／ 全件: 2025/9/8以降の全記事を取得</p>
+    <p class="hint">件数指定: 最新の公開記事から指定件数を取得（最大50件） ／ 期間指定: 選んだ期間内に公開された記事を取得 ／ 全期間: 日付の制限なしで全記事を取得<span id="fetch-all-note" class="hint-warn" style="display:none"><br>⚠️ 全期間は記事が多いと取得に時間がかかることがあります</span></p>
     <div class="input-row">
       <input type="text" id="article-url-input" placeholder="記事URLで個別登録（例: https://note.com/xxx/n/xxxxx）" onkeydown="if(event.key==='Enter')registerArticle()" />
       <button class="btn" onclick="registerArticle()">登録</button>
@@ -522,12 +536,36 @@ function toggleTheme() {
   syncIfLoggedIn();
 }
 
-// 取得設定（件数指定/全件・件数）を保存して端末間で同期する
+// 期間指定の選択肢（値 → 表示名）
+const FETCH_PERIODS = { '1w': '1週間', '1m': '1か月', '3m': '3か月', '6m': '半年', '1y': '1年' };
+
+function currentFetchPeriod() {
+  const p = localStorage.getItem('nc_fetch_period');
+  return FETCH_PERIODS[p] ? p : '1m';
+}
+
+// 期間の起点（基準時刻）から、その期間の開始時刻を求める（1か月以上はカレンダーの月で数える）
+function periodCutoff(period, now) {
+  const d = new Date(now);
+  if (period === '1w') d.setDate(d.getDate() - 7);
+  else d.setMonth(d.getMonth() - ({ '1m': 1, '3m': 3, '6m': 6, '1y': 12 })[period]);
+  return d.getTime();
+}
+
+// 選んでいるモードに合わせて、件数欄・期間欄の有効/無効と全期間の注意書きを切り替える
+function updateFetchModeUI(mode) {
+  document.getElementById('article-count').disabled = (mode !== 'count');
+  document.getElementById('fetch-period').disabled = (mode !== 'period');
+  document.getElementById('fetch-all-note').style.display = (mode === 'all') ? '' : 'none';
+}
+
+// 取得設定（件数指定/期間指定/全期間・件数・期間）を保存して端末間で同期する
 function saveFetchSettings() {
   const mode = document.querySelector('input[name="fetch-mode"]:checked').value;
-  document.getElementById('article-count').disabled = (mode === 'all');
+  updateFetchModeUI(mode);
   localStorage.setItem('nc_fetch_mode', mode);
   localStorage.setItem('nc_fetch_count', document.getElementById('article-count').value);
+  localStorage.setItem('nc_fetch_period', document.getElementById('fetch-period').value);
   syncIfLoggedIn();
 }
 
@@ -538,7 +576,8 @@ function applyFetchSettings() {
   if (radio) radio.checked = true;
   const countEl = document.getElementById('article-count');
   countEl.value = count;
-  countEl.disabled = (mode === 'all');
+  document.getElementById('fetch-period').value = currentFetchPeriod();
+  updateFetchModeUI(mode);
 }
 
 function changeNoteId() {
@@ -750,13 +789,14 @@ function filterUnrepliedComments(comments, ownerUrlname) {
   return result;
 }
 
-async function fetchAllArticlesViaAPI(urlname, statusEl) {
-  const cutoff = new Date('2025-09-08T10:00:00+09:00').getTime();
+// cutoff 以降に公開された記事を取得する（cutoff が null なら全期間）
+// 記事一覧は新しい順（先頭の固定記事を除く）なので、期間外の記事が出た時点でページングを打ち切る
+async function fetchArticlesSince(urlname, statusEl, cutoff, rangeLabel) {
   const articles = [];
   let page = 1;
   while (true) {
     if (fetchCancelled) break;
-    statusEl.textContent = `全記事を取得中...（${articles.length}件取得済、ページ${page}）`;
+    statusEl.textContent = `${rangeLabel}の記事を取得中...（${articles.length}件取得済、ページ${page}）`;
     const apiUrl = `https://note.com/api/v2/creators/${urlname}/contents?kind=note&page=${page}&per=20`;
     const res = await fetchWithCors(apiUrl);
     if (!res || !res.ok) break;
@@ -766,16 +806,22 @@ async function fetchAllArticlesViaAPI(urlname, statusEl) {
     let reachedCutoff = false;
     for (const n of notes) {
       const pubTime = new Date(n.publishAt || n.published_at || n.createdAt || n.created_at).getTime();
-      if (pubTime < cutoff) { reachedCutoff = true; break; }
+      if (cutoff !== null && pubTime < cutoff) {
+        // 固定記事は古くても先頭に来るので、打ち切りの判定には使わない
+        if (n.isPinned) continue;
+        reachedCutoff = true;
+        break;
+      }
       articles.push({
         title: n.name || n.title || '',
         link: `https://note.com/${urlname}/n/${n.key}`,
         pubDate: n.publishAt || n.published_at || n.createdAt || n.created_at || '',
         thumbnail: n.eyecatch || '',
-        description: n.body || ''
+        description: n.body || '',
+        commentCount: n.commentCount
       });
     }
-    if (reachedCutoff || data.data?.is_last_page) break;
+    if (reachedCutoff || data.data?.isLastPage || data.data?.is_last_page) break;
     page++;
   }
   return articles;
@@ -805,13 +851,19 @@ async function fetchArticles() {
 
   try {
     let articles = [];
+    let rangeLabel = '';
     if (!urlname) {
       // noteID未入力：登録記事のみチェック
-    } else if (fetchMode === 'all') {
-      status.textContent = '全記事を取得中...';
-      articles = await fetchAllArticlesViaAPI(urlname, status);
+    } else if (fetchMode === 'all' || fetchMode === 'period') {
+      // 期間の起点は「更新」を押した時点
+      const period = currentFetchPeriod();
+      const cutoff = fetchMode === 'period' ? periodCutoff(period, Date.now()) : null;
+      rangeLabel = fetchMode === 'period' ? '過去' + FETCH_PERIODS[period] : '全期間';
+      status.textContent = `${rangeLabel}の記事を取得中...`;
+      articles = await fetchArticlesSince(urlname, status, cutoff, rangeLabel);
       if (fetchCancelled) throw new Error('取得を中止しました');
-      if (articles.length === 0) throw new Error('記事が見つかりませんでした');
+      // 期間指定は該当0件もありうるので、URL登録記事があればそれだけでチェックを続ける
+      if (fetchMode === 'all' && articles.length === 0) throw new Error('記事が見つかりませんでした');
     } else {
       const countEl = document.getElementById('article-count');
       const articleCount = Math.max(1, Math.min(50, parseInt(countEl.value) || 1));
@@ -829,7 +881,7 @@ async function fetchArticles() {
         const notes = data.data?.contents || [];
         if (notes.length === 0) break;
         allNotes.push(...notes);
-        if (data.data?.is_last_page) break;
+        if (data.data?.isLastPage || data.data?.is_last_page) break;
         page++;
       }
       if (fetchCancelled) throw new Error('取得を中止しました');
@@ -839,7 +891,8 @@ async function fetchArticles() {
         link: `https://note.com/${urlname}/n/${n.key}`,
         pubDate: n.publishAt || n.published_at || n.createdAt || n.created_at || '',
         thumbnail: n.eyecatch || '',
-        description: n.body || ''
+        description: n.body || '',
+        commentCount: n.commentCount
       }));
     }
 
@@ -851,7 +904,9 @@ async function fetchArticles() {
     });
     if (articles.length === 0) throw new Error('記事が見つかりませんでした');
 
-    status.textContent = `${articles.length}件の記事の未返信コメントを取得中...（0/${articles.length}）`;
+    // コメント数が0とわかっている記事はコメント取得APIを呼ばない（URL登録記事はコメント数が不明なので毎回取得）
+    const targets = articles.map((_, i) => i).filter(i => articles[i].commentCount !== 0);
+    status.textContent = `${targets.length}件の記事の未返信コメントを取得中...（0/${targets.length}）`;
 
     // コメント取得を並列化（同時5件まで）
     const COMMENT_CONCURRENCY = 5;
@@ -860,15 +915,16 @@ async function fetchArticles() {
     let nextIndex = 0;
     async function commentWorker() {
       while (true) {
-        const idx = nextIndex++;
-        if (idx >= articles.length || fetchCancelled) return;
+        const t = nextIndex++;
+        if (t >= targets.length || fetchCancelled) return;
+        const idx = targets[t];
         const noteKey = extractNoteKey(articles[idx].link);
         commentsResults[idx] = noteKey ? await fetchCommentsForNote(noteKey) : [];
         doneCount++;
-        status.textContent = `${articles.length}件の記事の未返信コメントを取得中...（${doneCount}/${articles.length}）`;
+        status.textContent = `${targets.length}件の記事の未返信コメントを取得中...（${doneCount}/${targets.length}）`;
       }
     }
-    await Promise.all(Array.from({ length: Math.min(COMMENT_CONCURRENCY, articles.length) }, commentWorker));
+    await Promise.all(Array.from({ length: Math.min(COMMENT_CONCURRENCY, targets.length) }, commentWorker));
     if (fetchCancelled) throw new Error('取得を中止しました');
 
     let totalComments = 0;
@@ -909,8 +965,10 @@ async function fetchArticles() {
     document.getElementById('m-articles').textContent = totalComments;
     document.getElementById('summary-bar').style.display = 'flex';
 
-    // 全件モードでは「最新N件」ではなく「全N件」と表示する
-    const articlesLabel = (urlname && fetchMode === 'all' ? '全' : '最新') + articles.length + '件の記事';
+    // モードごとに「最新N件の記事」「過去1か月の記事（N件）」「全期間の記事（N件）」と出し分ける
+    const articlesLabel = (!urlname || fetchMode === 'count')
+      ? '最新' + articles.length + '件の記事'
+      : rangeLabel + 'の記事（' + articles.length + '件）';
     if (totalComments === 0) {
       list.innerHTML = '<div class="empty">' + articlesLabel + 'に未返信コメントはありません</div>';
     }
@@ -1163,7 +1221,7 @@ renderRegisteredTags();
 // noteID登録済みなら入力欄を隠して表示に切り替え（表示名は取得でき次第反映）
 updateNoteIdUI();
 loadMyProfile();
-// 取得設定（件数指定/全件・件数）を復元
+// 取得設定（件数指定/期間指定/全期間・件数・期間）を復元
 applyFetchSettings();
 // 前回取得したフィードを折りたたみ状態で即表示し、裏で自動更新
 if (feedCache && Array.isArray(feedCache.items) && feedCache.items.length > 0) {
@@ -1211,6 +1269,7 @@ function collectState() {
     theme: currentTheme(),
     fetchMode: localStorage.getItem('nc_fetch_mode') || 'count',
     fetchCount: Math.max(1, Math.min(50, parseInt(localStorage.getItem('nc_fetch_count')) || 3)),
+    fetchPeriod: currentFetchPeriod(),
     checkedArticles, repliedComments, creators, readFeeds,
     registeredArticles, expandedGroups, hideRead,
     updatedAt: Date.now()
@@ -1292,13 +1351,14 @@ async function applyRemoteState(user) {
     registeredArticles = [...rr, ...registeredArticles.filter(r => !rrKeys.has(r.key))];
     if (Array.isArray(remote.expandedGroups)) expandedGroups = union(expandedGroups, remote.expandedGroups);
     if (typeof remote.hideRead === 'boolean') hideRead = remote.hideRead;
-    // 取得設定（件数指定/全件・件数）はリモート優先
+    // 取得設定（件数指定/期間指定/全期間・件数・期間）はリモート優先
     // 表示テーマもリモート優先で復元
     if (['auto', 'light', 'dark'].includes(remote.theme)) {
       localStorage.setItem('nc_theme', remote.theme);
       applyTheme();
     }
-    if (remote.fetchMode === 'count' || remote.fetchMode === 'all') localStorage.setItem('nc_fetch_mode', remote.fetchMode);
+    if (['count', 'period', 'all'].includes(remote.fetchMode)) localStorage.setItem('nc_fetch_mode', remote.fetchMode);
+    if (FETCH_PERIODS[remote.fetchPeriod]) localStorage.setItem('nc_fetch_period', remote.fetchPeriod);
     if (Number.isFinite(remote.fetchCount)) localStorage.setItem('nc_fetch_count', String(remote.fetchCount));
     applyFetchSettings();
   }
