@@ -560,7 +560,6 @@ function switchTab(tab, el) {
 }
 
 function syncIfLoggedIn() { if (window.scheduleSync) window.scheduleSync(); }
-function saveChecked() { localStorage.setItem('nc_checked', JSON.stringify(checkedArticles)); syncIfLoggedIn(); }
 function saveCreators() { localStorage.setItem('nc_creators', JSON.stringify(creators)); syncIfLoggedIn(); }
 function saveReadFeeds() { localStorage.setItem('nc_read_feeds', JSON.stringify(readFeeds)); syncIfLoggedIn(); }
 function saveExpanded() { localStorage.setItem('nc_expanded_groups', JSON.stringify(expandedGroups)); syncIfLoggedIn(); }
@@ -772,8 +771,7 @@ async function fetchAllArticlesViaAPI(urlname, statusEl) {
         description: n.body || ''
       });
     }
-    if (reachedCutoff || !data.data?.is_last_page === false) break;
-    if (data.data?.is_last_page) break;
+    if (reachedCutoff || data.data?.is_last_page) break;
     page++;
   }
   return articles;
@@ -907,12 +905,14 @@ async function fetchArticles() {
     document.getElementById('m-articles').textContent = totalComments;
     document.getElementById('summary-bar').style.display = 'flex';
 
+    // 全件モードでは「最新N件」ではなく「全N件」と表示する
+    const articlesLabel = (urlname && fetchMode === 'all' ? '全' : '最新') + articles.length + '件の記事';
     if (totalComments === 0) {
-      list.innerHTML = '<div class="empty">最新' + articles.length + '件の記事に未返信コメントはありません</div>';
+      list.innerHTML = '<div class="empty">' + articlesLabel + 'に未返信コメントはありません</div>';
     }
 
     status.className = 'status';
-    status.textContent = `完了 — 最新${articles.length}件の記事から${totalComments}件の未返信コメントを検出`;
+    status.textContent = `完了 — ${articlesLabel}から${totalComments}件の未返信コメントを検出`;
   } catch(e) {
     status.className = 'status' + (fetchCancelled ? '' : ' error');
     status.textContent = e.message;
@@ -936,19 +936,6 @@ function markReplied(btn) {
     const current = parseInt(counter.textContent) || 0;
     if (current > 0) counter.textContent = current - 1;
   }
-}
-
-function markChecked(id) {
-  if (!checkedArticles.includes(id)) checkedArticles.push(id);
-  saveChecked();
-  const card = document.querySelector(`[data-article-id="${CSS.escape(id)}"]`);
-  if (card) {
-    card.classList.add('read');
-    const btn = card.querySelector('.btn-sm:last-child');
-    if (btn) { btn.textContent = '確認済み'; btn.classList.add('is-read'); }
-  }
-  const el = document.getElementById('m-unreplied');
-  el.textContent = Math.max(0, parseInt(el.textContent) - 1);
 }
 
 function renderCreatorTags() {
