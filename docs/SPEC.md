@@ -10,7 +10,7 @@
 | 目的 | note の「自分の記事についた未返信コメントの確認」と「お気に入りクリエイターの新着記事チェック」を1画面で行う |
 | 構成 | `index.html` 1ファイルのみ（HTML / CSS / JS をすべて内包）。ビルド工程なし |
 | ホスティング | GitHub Pages（`main` への push で `.github/workflows/deploy.yml` が自動デプロイ） |
-| 外部依存 | note 非公式API、CORS プロキシ、Firebase（Auth / Firestore） |
+| 外部依存 | note 非公式API、自前 Cloudflare Worker（CORS プロキシ）、公開 CORS プロキシ（予備）、Firebase（Auth / Firestore） |
 | 対応画面 | 最大幅 720px の1カラム。PC・スマホ両対応 |
 
 ## 2. ファイル構成
@@ -21,6 +21,11 @@ favicon.png                 ファビコン（※index.html 内は base64 埋め
 .github/workflows/deploy.yml GitHub Pages デプロイ
 CLAUDE.md                   Claude 用の作業ルール
 docs/SPEC.md                この仕様書
+worker/                     自前 CORS プロキシ（Cloudflare Worker「notebiyori-proxy」、wrangler で管理）
+  ├ wrangler.toml           Worker の設定
+  ├ package.json            wrangler の依存とスクリプト
+  ├ src/index.js            Worker 本体
+  └ README.md               役割と再デプロイ手順
 ```
 
 ## 3. 画面構成
@@ -149,12 +154,29 @@ docs/SPEC.md                この仕様書
 
 note API はブラウザから直接叩けないため、以下のプロキシを経由する（優先度順）。
 
-1. `r.jina.ai`（`x-respond-with: text` ヘッダー付き）
-2. `proxy.cors.sh`
-3. `api.codetabs.com`
-4. `api.cors.lol`
-5. `api.allorigins.win`
-6. すべて失敗したら直接 fetch を最後に試す
+1. **自前 Cloudflare Worker**（`notebiyori-proxy`）— メイン。URL は `index.html` の定数 `NOTEBIYORI_PROXY_URL` 1か所で管理し、空文字のあいだは使わない
+2. `r.jina.ai`（`x-respond-with: text` ヘッダー付き）
+3. `proxy.cors.sh`
+4. `api.codetabs.com`
+5. `api.cors.lol`
+6. `api.allorigins.win`
+7. すべて失敗したら直接 fetch を最後に試す
+
+2〜6 の公開プロキシは予備として残している。
+
+#### 自前 Worker の仕様
+
+| 項目 | 内容 |
+| --- | --- |
+| 形式 | `{NOTEBIYORI_PROXY_URL}/?url={エンコードした note API URL}` |
+| メソッド | `GET` と `OPTIONS`（プリフライト）のみ。それ以外は 405 |
+| 中継できる URL | `https://note.com` の 5.2 の4種類のパスのみ。それ以外は 403 |
+| Origin 制限 | `https://kyownruby.github.io`、`http://localhost[:port]`、`http://127.0.0.1[:port]` のみ。それ以外・Origin なしは 403 |
+| レスポンス | note のステータスコードと JSON をそのまま返し、許可 Origin に `Access-Control-Allow-Origin` を付与 |
+| キャッシュ | プロフィール（`/api/v2/creators/{urlname}`）の成功レスポンスのみ 10 分。記事一覧・記事情報・コメントはキャッシュしない。`_t` は転送先とキャッシュキーから除外 |
+| note へのリクエスト | 一般的なブラウザの User-Agent を付与 |
+
+詳細と再デプロイ手順は `worker/README.md` を参照。
 
 #### 制御ロジック
 
@@ -166,7 +188,7 @@ note API はブラウザから直接叩けないため、以下のプロキシ�
 | リトライ | 全プロキシ失敗時に 1秒後・3秒後の計2回再試行 |
 | キャッシュ回避 | URL に `_t={timestamp}` を付与、`cache: 'no-store'` |
 | 失敗判定 | HTTPエラー / 空レスポンス / `{` で始まらない（JSONでない）レスポンス |
-| プロキシ選択 | 連続失敗数の少ない順。同数ならローテーションで負荷分散 |
+| プロキシ選択 | 連続失敗数の少ない順。同数なら自前 Worker を先に、公開プロキシ同士はローテーションで負荷分散 |
 | 健全性の記憶 | 連続失敗数を `nc_proxy_health` に保存し、24時間有効 |
 
 ### 5.2 利用している note API
