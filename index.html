@@ -290,7 +290,7 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; b
 
 <script>
 // 自前のCloudflare Worker（worker/ を参照）のURL。空文字のあいだは使わない
-const NOTEBIYORI_PROXY_URL = '';
+const NOTEBIYORI_PROXY_URL = 'https://notebiyori-proxy.make-my-dream-alive.workers.dev';
 // 生存確認済みのプロキシを優先度順に並べる（自前Workerが最優先、公開プロキシは予備）
 const CORS_PROXIES = [
   ...(NOTEBIYORI_PROXY_URL ? [{ fn: url => NOTEBIYORI_PROXY_URL + '/?url=' + encodeURIComponent(url), headers: undefined, own: true }] : []),
